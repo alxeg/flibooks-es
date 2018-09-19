@@ -17,13 +17,13 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
     let settings = conf::SETTINGS.read()?;
     let base_url = (&settings.elastic_base_url).as_str();
 
-    info!("Parsing the '{}' file", file_name);
     info!("Using the elasticsearch at '{}'", base_url);
 
     let client = AsyncClientBuilder::new()
         .base_url(base_url)
         .build(&core.handle())?;
 
+    info!("Parsing the '{}' file", file_name);
     let file = fs::File::open(file_name)?;
 
     let mut archive = zip::ZipArchive::new(file)?;
