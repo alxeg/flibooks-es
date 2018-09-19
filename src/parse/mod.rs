@@ -17,6 +17,9 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
     let settings = conf::SETTINGS.read()?;
     let base_url = (&settings.elastic_base_url).as_str();
 
+    info!("Parsing the '{}' file", file_name);
+    info!("Using the elasticsearch at '{}'", base_url);
+
     let client = AsyncClientBuilder::new()
         .base_url(base_url)
         .build(&core.handle())?;
@@ -60,7 +63,7 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
             let bulk_future = res_future.and_then(|bulk| {
                 for op in bulk {
                     match op {
-                        Err(op) => println!("err: {:?}", op),
+                        Err(op) => error!("error processing document: {:?}", op),
                         _ => (),
                     }
                 }
