@@ -1,0 +1,2 @@
+
+elastic_base_url = "http://10.100.4.5:9200/flibooks" 
