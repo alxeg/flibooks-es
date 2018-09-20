@@ -41,8 +41,7 @@ fn main() {
                         .required(true)
                         .takes_value(true),
                 ),
-        )
-        .subcommand(SubCommand::with_name("serve").about("Serves the REST API (Default)"))
+        ).subcommand(SubCommand::with_name("serve").about("Serves the REST API (Default)"))
         .get_matches();
 
     match matches.subcommand_matches("parse") {
