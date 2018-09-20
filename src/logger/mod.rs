@@ -27,7 +27,8 @@ pub fn setup() -> Result<(), Box<Error>> {
         let stdout = ConsoleAppender::builder()
             .encoder(Box::new(PatternEncoder::new(
                 "{d(%+)(local)} {h({l})} [{t}] [{f}:{L}] {m}{n}",
-            ))).build();
+            )))
+            .build();
         let config = Config::builder()
             .appender(Appender::builder().build("stdout", Box::new(stdout)))
             .build(Root::builder().appender("stdout").build(log_level))
