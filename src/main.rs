@@ -1,11 +1,17 @@
+extern crate bodyparser;
 extern crate config;
 extern crate elastic;
 extern crate futures;
+extern crate iron;
+extern crate jsonpath;
 extern crate log4rs;
+extern crate persistent;
 extern crate tokio_core;
 extern crate uuid;
 extern crate zip;
 
+#[macro_use]
+extern crate router;
 #[macro_use]
 extern crate serde_json;
 #[macro_use]
@@ -20,6 +26,7 @@ extern crate clap;
 pub mod conf;
 pub mod logger;
 pub mod parse;
+pub mod serve;
 
 use clap::{App, Arg, SubCommand};
 
@@ -41,17 +48,17 @@ fn main() {
                         .required(true)
                         .takes_value(true),
                 ),
-        ).subcommand(SubCommand::with_name("serve").about("Serves the REST API (Default)"))
+        )
+        .subcommand(SubCommand::with_name("serve").about("Serves the REST API (Default)"))
         .get_matches();
 
     match matches.subcommand_matches("parse") {
         Some(parse_args) => {
             let inpx_file = parse_args.value_of("inpx").unwrap();
-            info!("Parsing the '{}' file", inpx_file);
-            // parse::start(inpx_file).unwrap();
+            parse::start(inpx_file).unwrap();
         }
         _ => {
-            info!("Serving the API");
+            serve::start().unwrap();
         }
     }
 }

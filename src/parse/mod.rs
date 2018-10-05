@@ -14,6 +14,8 @@ use conf;
 pub fn start(file_name: &str) -> Result<(), Box<Error>> {
     let mut core = Core::new()?;
 
+    info!("Parsing the '{}' file", file_name);
+
     let settings = conf::SETTINGS.read()?;
     let base_url = (&settings.elastic_base_url).as_str();
 
@@ -79,7 +81,8 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
 fn process_book(fields: Vec<&str>) -> serde_json::Value {
     let authors: Vec<_> = fields[0].split(":").filter(|s| !s.is_empty()).collect();
     let genres: Vec<_> = fields[1].split(":").filter(|s| !s.is_empty()).collect();
-    return json!({
+
+    json!({
         "title": fields[2],
         "authors": authors,
         "genres": genres,
@@ -92,5 +95,5 @@ fn process_book(fields: Vec<&str>) -> serde_json::Value {
         "ext":fields[9],
         "date":fields[10],
         "lang":fields[11],
-    });
+    })
 }
