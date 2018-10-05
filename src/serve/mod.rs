@@ -4,7 +4,7 @@ use iron::modifiers::Header;
 use iron::prelude::*;
 use iron::{headers, status};
 use jsonpath::Selector;
-use persistent::Read as pRead;
+use persistent;
 use serde_json;
 use serde_json::Value;
 use std::error::Error;
@@ -40,11 +40,13 @@ pub fn start() -> Result<(), Box<Error>> {
     let listen = &settings.listen_address;
 
     let router = router!{
-        auhtors: post "/api/author/search" => authors_handler,
+        authors: post "/api/author/search" => authors_handler,
     };
 
     let mut chain = Chain::new(router);
-    chain.link_before(pRead::<bodyparser::MaxBodyLength>::one(MAX_BODY_LENGTH));
+    chain.link_before(persistent::Read::<bodyparser::MaxBodyLength>::one(
+        MAX_BODY_LENGTH,
+    ));
 
     info!("Serving the API on {}", listen);
     Iron::new(chain).http(listen)?;
