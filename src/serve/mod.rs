@@ -56,7 +56,7 @@ pub fn start() -> Result<(), Box<Error>> {
 
 fn authors_handler(req: &mut Request) -> IronResult<Response> {
     let body = req.get::<bodyparser::Struct<request::Author>>();
-    let mut _error_response = String::new();
+    let mut _error_response = Response::with((status::BadRequest, "Internal Server Error"));
 
     match body {
         Ok(Some(author_req)) => {
@@ -64,17 +64,17 @@ fn authors_handler(req: &mut Request) -> IronResult<Response> {
 
             match search_es(
                 json!({
-                            "size": 0,
-                            "aggs": {
-                                    "author": {
-                                    "terms": {
-                                        "field": "authors.keyword",
-                                        "include": author_req.author,
-                                        "size": author_req.limit
-                                        }
-                                    }
-                        }}),
-                "$.aggregations.author.buckets",
+                    "size": 0,
+                    "aggs": {
+                        "author": {
+                        "terms": {
+                            "field": "authors.keyword",
+                            "include": author_req.author,
+                            "size": author_req.limit
+                            }
+                        }
+                }}),
+                "$.aggregations.author.bucke1ts",
             ) {
                 Ok(search_result) => {
                     return Ok(Response::with((
@@ -83,14 +83,14 @@ fn authors_handler(req: &mut Request) -> IronResult<Response> {
                         search_result,
                     )));
                 }
-                Err(e) => _error_response = String::from(e.to_string()),
+                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
             }
         }
-        _ => _error_response = String::from("Failed to parse request"),
+        _ => _error_response = Response::with((status::BadRequest, "Failed to parse request")),
     }
 
-    error!("Error: {}", _error_response.as_str());
-    Ok(Response::with((status::BadRequest, _error_response)))
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
 }
 
 fn search_es(query: Value, filter: &str) -> Result<String, Box<Error>> {
@@ -111,9 +111,7 @@ fn search_es(query: Value, filter: &str) -> Result<String, Box<Error>> {
         Some(filtered) => {
             result.push_str(&serde_json::to_string(&(*filtered))?.to_string());
         }
-        None => {
-            result.push_str("[]");
-        }
+        None => return Err(From::from("No matched data found")),
     }
 
     Ok(result)
