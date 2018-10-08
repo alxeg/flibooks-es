@@ -14,8 +14,6 @@ use conf;
 pub fn start(file_name: &str) -> Result<(), Box<Error>> {
     let mut core = Core::new()?;
 
-    info!("Parsing the '{}' file", file_name);
-
     let settings = conf::SETTINGS.read()?;
     let base_url = (&settings.elastic_base_url).as_str();
 
@@ -87,9 +85,9 @@ fn process_book(fields: Vec<&str>) -> serde_json::Value {
         "authors": authors,
         "genres": genres,
         "series": fields[3],
-        "ser_no":fields[4],
+        "ser_no":fields[4].parse::<i32>().unwrap_or(0),
         "file":fields[5],
-        "file_size":fields[6],
+        "file_size":fields[6].parse::<i32>().unwrap_or(0),
         "lib_id":fields[7],
         "del":fields[8],
         "ext":fields[9],

@@ -130,6 +130,11 @@ fn authors_books_handler(req: &mut Request) -> IronResult<Response> {
             if !search.author.is_empty() {
                 let mut req = json!({
                     "size": search.limit,
+                    "sort": [
+                        "series.keyword",
+                        "ser_no",
+                        "title.keyword"
+                    ],
                     "query": {
                         "bool": {
                             "filter": [{
