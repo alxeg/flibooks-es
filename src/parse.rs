@@ -81,17 +81,17 @@ fn process_book(fields: Vec<&str>) -> serde_json::Value {
     let genres: Vec<_> = fields[1].split(":").filter(|s| !s.is_empty()).collect();
 
     json!({
-        "title": fields[2],
-        "authors": authors,
-        "genres": genres,
-        "series": fields[3],
-        "ser_no":fields[4].parse::<i32>().unwrap_or(0),
-        "file":fields[5],
-        "file_size":fields[6].parse::<i32>().unwrap_or(0),
-        "lib_id":fields[7],
-        "del":fields[8],
-        "ext":fields[9],
-        "date":fields[10],
-        "lang":fields[11],
+        "title":        fields[2],
+        "authors":      authors,
+        "genres":       genres,
+        "series":       fields[3],
+        "ser_no":       fields[4].parse::<i32>().unwrap_or(0),
+        "file":         fields[5],
+        "file_size":    fields[6].parse::<i32>().unwrap_or(0),
+        "lib_id":       fields[7],
+        "del":          fields[8],
+        "ext":          fields[9],
+        "date":         fields[10],
+        "lang":         fields[11],
     })
 }
