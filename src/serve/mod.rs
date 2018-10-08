@@ -74,7 +74,7 @@ fn authors_handler(req: &mut Request) -> IronResult<Response> {
                             }
                         }
                 }}),
-                "$.aggregations.author.bucke1ts",
+                "$.aggregations.author.buckets",
             ) {
                 Ok(search_result) => {
                     return Ok(Response::with((
