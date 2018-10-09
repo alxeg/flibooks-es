@@ -19,7 +19,7 @@ const MAX_BODY_LENGTH: usize = 1024 * 1024 * 10;
 
 enum SearchType {
     AuthorsBooks,
-    BooksSearch,
+    TitlesSearch,
     SeriesSearch,
 }
 
@@ -106,7 +106,7 @@ fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json
 
     // setup filters
     let mut filters = match s_type {
-        SearchType::BooksSearch => {
+        SearchType::TitlesSearch => {
             let mut vec = Vec::new();
             vec.push(json!({"wildcard": { "authors": search.author }}));
             vec.push(json!({"wildcard": { "title": search.title }}));
@@ -152,7 +152,7 @@ fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json
             vec.push(json!("title.keyword"));
             vec
         }
-        SearchType::BooksSearch => {
+        SearchType::TitlesSearch => {
             let mut vec = Vec::new();
             vec.push(json!("title.keyword"));
             vec
@@ -240,7 +240,7 @@ fn title_search_handler(req: &mut Request) -> IronResult<Response> {
     match body {
         Ok(Some(search)) => {
             debug!("Books title search:\n{:?}", search);
-            let req = compose_es_request(search, SearchType::BooksSearch);
+            let req = compose_es_request(search, SearchType::TitlesSearch);
             match es_search(req, "$.hits.hits") {
                 Ok(search_result) => {
                     return Ok(Response::with((
