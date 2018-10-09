@@ -17,6 +17,12 @@ pub mod request;
 
 const MAX_BODY_LENGTH: usize = 1024 * 1024 * 10;
 
+enum SearchType {
+    AuthorsBooks,
+    BooksSearch,
+    SeriesSearch,
+}
+
 lazy_static! {
     pub static ref ES: SyncClient = es_connect().unwrap();
 }
@@ -27,8 +33,10 @@ pub fn start() -> Result<(), Box<Error>> {
     let listen = &settings.listen_address;
 
     let router = router!{
-        authr:       post "/api/author/search" => authors_handler,
-        authr_books: post "/api/author/books"  => authors_books_handler,
+        authr:          post "/api/author/search" => authors_handler,
+        authr_books:    post "/api/author/books"  => authors_books_handler,
+        title_search:   post "/api/book/search"  => title_search_handler,
+        series_search:  post "/api/book/series"  => series_search_handler,
     };
 
     let mut chain = Chain::new(router);
@@ -79,6 +87,85 @@ fn es_search(query: Value, filter: &str) -> Result<String, Box<Error>> {
     Ok(result)
 }
 
+fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json::Value {
+    let del = if search.deleted { 1 } else { 0 };
+
+    let mut req = json!({
+        "size": search.limit,
+        "sort": [
+        ],
+        "query": {
+            "bool": {
+                "filter": [{
+                    "terms": {
+                        "del": [ 0, del ]
+                    }
+                }]
+            }
+    }});
+
+    // setup filters
+    let mut filters = match s_type {
+        SearchType::BooksSearch => {
+            let mut vec = Vec::new();
+            vec.push(json!({"wildcard": { "authors": search.author }}));
+            vec.push(json!({"wildcard": { "title": search.title }}));
+            vec
+        }
+        SearchType::SeriesSearch => {
+            let mut vec = Vec::new();
+            vec.push(json!({"wildcard": { "authors": search.author }}));
+            vec.push(json!({"wildcard": { "series": search.series }}));
+            vec
+        }
+        SearchType::AuthorsBooks => {
+            let mut vec = Vec::new();
+            vec.push(json!({
+                "match_phrase_prefix": {
+                    "authors": search.author
+                }
+            }));
+            vec
+        }
+    };
+
+    if !search.langs.is_empty() {
+        filters.push(json!({
+            "terms": {
+                "lang": search.langs
+            }
+        }));
+    }
+
+    req["query"].as_object_mut().unwrap()["bool"]
+        .as_object_mut()
+        .unwrap()["filter"]
+        .as_array_mut()
+        .unwrap()
+        .append(&mut filters);
+
+    let mut sort = match s_type {
+        SearchType::SeriesSearch | SearchType::AuthorsBooks => {
+            let mut vec = Vec::new();
+            vec.push(json!("series.keyword"));
+            vec.push(json!("ser_no"));
+            vec.push(json!("title.keyword"));
+            vec
+        }
+        SearchType::BooksSearch => {
+            let mut vec = Vec::new();
+            vec.push(json!("title.keyword"));
+            vec
+        }
+    };
+
+    req["sort"].as_array_mut().unwrap().append(&mut sort);
+
+    debug!("es request {:?}", req);
+
+    req
+}
+
 fn authors_handler(req: &mut Request) -> IronResult<Response> {
     let body = req.get::<bodyparser::Struct<request::Author>>();
     let mut _error_response = Response::with((status::BadRequest, "Server Error"));
@@ -125,58 +212,17 @@ fn authors_books_handler(req: &mut Request) -> IronResult<Response> {
     match body {
         Ok(Some(search)) => {
             debug!("Author's books request:\n{:?}", search);
-            let del = if search.deleted { 1 } else { 0 };
+            let req = compose_es_request(search, SearchType::AuthorsBooks);
 
-            if !search.author.is_empty() {
-                let mut req = json!({
-                    "size": search.limit,
-                    "sort": [
-                        "series.keyword",
-                        "ser_no",
-                        "title.keyword"
-                    ],
-                    "query": {
-                        "bool": {
-                            "filter": [{
-                                    "match_phrase_prefix": {
-                                        "authors": search.author
-                                    }
-                                }, {
-                                    "terms": {
-                                        "del": [ 0, del ]
-                                    }
-                            }]
-                        }
-                }});
-
-                if !search.langs.is_empty() {
-                    req["query"].as_object_mut().unwrap()["bool"]
-                        .as_object_mut()
-                        .unwrap()["filter"]
-                        .as_array_mut()
-                        .unwrap()
-                        .push(json!(
-                        {
-                            "terms": {
-                                "lang": search.langs
-                            }
-                        }
-                    ));
+            match es_search(req, "$.hits.hits") {
+                Ok(search_result) => {
+                    return Ok(Response::with((
+                        status::Ok,
+                        Header(headers::ContentType::json()),
+                        search_result,
+                    )));
                 }
-
-                match es_search(req, "$.hits.hits") {
-                    Ok(search_result) => {
-                        return Ok(Response::with((
-                            status::Ok,
-                            Header(headers::ContentType::json()),
-                            search_result,
-                        )));
-                    }
-                    Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
-                }
-            } else {
-                _error_response =
-                    Response::with((status::BadRequest, "No author in search request"));
+                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
             }
         }
         _ => {
@@ -184,6 +230,58 @@ fn authors_books_handler(req: &mut Request) -> IronResult<Response> {
         }
     }
 
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
+}
+
+fn title_search_handler(req: &mut Request) -> IronResult<Response> {
+    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+    let body = req.get::<bodyparser::Struct<request::Search>>();
+    match body {
+        Ok(Some(search)) => {
+            debug!("Books title search:\n{:?}", search);
+            let req = compose_es_request(search, SearchType::BooksSearch);
+            match es_search(req, "$.hits.hits") {
+                Ok(search_result) => {
+                    return Ok(Response::with((
+                        status::Ok,
+                        Header(headers::ContentType::json()),
+                        search_result,
+                    )));
+                }
+                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+            }
+        }
+        _ => {
+            _error_response = Response::with((status::BadRequest, "Failed to parse search request"))
+        }
+    }
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
+}
+
+fn series_search_handler(req: &mut Request) -> IronResult<Response> {
+    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+    let body = req.get::<bodyparser::Struct<request::Search>>();
+    match body {
+        Ok(Some(search)) => {
+            debug!("Books series search:\n{:?}", search);
+            let req = compose_es_request(search, SearchType::SeriesSearch);
+            match es_search(req, "$.hits.hits") {
+                Ok(search_result) => {
+                    return Ok(Response::with((
+                        status::Ok,
+                        Header(headers::ContentType::json()),
+                        search_result,
+                    )));
+                }
+                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+            }
+        }
+        _ => {
+            _error_response = Response::with((status::BadRequest, "Failed to parse search request"))
+        }
+    }
     error!("Responding with error: {}", _error_response);
     Ok(_error_response)
 }
