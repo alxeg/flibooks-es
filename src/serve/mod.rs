@@ -33,10 +33,11 @@ pub fn start() -> Result<(), Box<Error>> {
     let listen = &settings.listen_address;
 
     let router = router!{
-        authr:          post "/api/author/search" => authors_handler,
-        authr_books:    post "/api/author/books"  => authors_books_handler,
-        title_search:   post "/api/book/search"  => title_search_handler,
-        series_search:  post "/api/book/series"  => series_search_handler,
+        authors:        post "/api/author/search" => authors_handler,
+        author_books:   post "/api/author/books"  => authors_books_handler,
+        langs:          get  "/api/book/langs"    => langs_handler,
+        title_search:   post "/api/book/search"   => title_search_handler,
+        series_search:  post "/api/book/series"   => series_search_handler,
     };
 
     let mut chain = Chain::new(router);
@@ -164,6 +165,44 @@ fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json
     debug!("es request {:?}", req);
 
     req
+}
+
+fn langs_handler(_req: &mut Request) -> IronResult<Response> {
+    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+    debug!("Get langs request");
+
+    // TODO: add ability to include langs for deleted books too
+    match es_search(
+        json!({
+            "size": 0,
+            "query": {
+                "match" : {
+                    "del":"0"
+                }
+            },
+            "aggs": {
+                "lang": {
+                    "terms": {
+                        "field": "lang.keyword",
+                        "include":  ".*",
+                        "size": 100
+                    }
+                }
+        }}),
+        "$.aggregations.lang.buckets",
+    ) {
+        Ok(search_result) => {
+            return Ok(Response::with((
+                status::Ok,
+                Header(headers::ContentType::json()),
+                search_result,
+            )));
+        }
+        Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+    }
+
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
 }
 
 fn authors_handler(req: &mut Request) -> IronResult<Response> {
