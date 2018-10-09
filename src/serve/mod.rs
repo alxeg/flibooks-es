@@ -73,7 +73,10 @@ fn es_search(query: Value, filter: &str) -> Result<String, Box<Error>> {
     };
 
     let mut raw = String::new();
-    ES.request(req).send()?.into_raw().read_to_string(&mut raw)?;
+    ES.request(req)
+        .send()?
+        .into_raw()
+        .read_to_string(&mut raw)?;
     let json: Value = serde_json::from_str(raw.as_str())?;
 
     let selector = Selector::new(filter)?;
