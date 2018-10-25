@@ -5,6 +5,7 @@ use iron::prelude::*;
 use iron::{headers, status};
 use jsonpath::Selector;
 use persistent;
+use router::Router;
 use serde_json;
 use serde_json::Value;
 use std::error::Error;
@@ -33,11 +34,12 @@ pub fn start() -> Result<(), Box<Error>> {
     let listen = &settings.listen_address;
 
     let router = router!{
-        authors:        post "/api/author/search" => authors_handler,
-        author_books:   post "/api/author/books"  => authors_books_handler,
-        langs:          get  "/api/book/langs"    => langs_handler,
-        title_search:   post "/api/book/search"   => title_search_handler,
-        series_search:  post "/api/book/series"   => series_search_handler,
+        authors:        post "/api/author/search"       => authors_handler,
+        author_books:   post "/api/author/books"        => authors_books_handler,
+        langs:          get  "/api/book/langs"          => langs_handler,
+        title_search:   post "/api/book/search"         => title_search_handler,
+        series_search:  post "/api/book/series"         => series_search_handler,
+        book_download:  get  "/api/book/:id/download"   => download_handler,
     };
 
     let mut chain = Chain::new(router);
@@ -324,6 +326,15 @@ fn series_search_handler(req: &mut Request) -> IronResult<Response> {
             _error_response = Response::with((status::BadRequest, "Failed to parse search request"))
         }
     }
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
+}
+
+fn download_handler(req: &mut Request) -> IronResult<Response> {
+    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+
+    let ref id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
+
     error!("Responding with error: {}", _error_response);
     Ok(_error_response)
 }
