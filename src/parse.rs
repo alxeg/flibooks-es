@@ -15,7 +15,8 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
     let mut core = Core::new()?;
 
     let settings = conf::SETTINGS.read()?;
-    let base_url = (&settings.elastic_base_url).as_str();
+    let base_url = (&settings.elastic_url).as_str();
+    let index = (&settings.elastic_index).as_str();
 
     info!("Using the elasticsearch at '{}'", base_url);
 
@@ -45,6 +46,7 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
 
                 let header = serde_json::to_string(&json!({
                     "index": {
+                        "_index": index,
                         "_type" : "book",
                         "_id": Uuid::new_v4(),
                     }}))?.to_string();

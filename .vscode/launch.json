@@ -3,7 +3,31 @@
     // Hover to view descriptions of existing attributes.
     // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
     "version": "0.2.0",
-    "configurations": [{
+    "configurations": [
+
+        {
+            "type": "lldb-mi",
+            "request": "launch",
+            "name": "Launch Programmmm",
+            "target": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
+            "env": {
+                "FLI_CONFIG": "${workspaceFolder}/flibooks"
+            },
+            "cwd": "${workspaceRoot}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Cargo launch",
+            "cargo": {
+                "args": [
+                    "build",
+                ]
+            },
+            "program": "${cargo:program}",
+            "args": []
+        },
+        {
         "type": "lldb",
         "request": "launch",
         "name": "Launch",

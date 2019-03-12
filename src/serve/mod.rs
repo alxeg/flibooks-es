@@ -11,6 +11,7 @@ use serde_json::Value;
 use std::error::Error;
 use std::io::Read;
 use std::iter::Iterator;
+use std::borrow::Cow;
 
 use conf;
 
@@ -39,6 +40,7 @@ pub fn start() -> Result<(), Box<Error>> {
         langs:          get  "/api/book/langs"          => langs_handler,
         title_search:   post "/api/book/search"         => title_search_handler,
         series_search:  post "/api/book/series"         => series_search_handler,
+        book_info:      get  "/api/book/:id"            => info_handler,
         book_download:  get  "/api/book/:id/download"   => download_handler,
     };
 
@@ -56,7 +58,7 @@ pub fn start() -> Result<(), Box<Error>> {
 pub fn es_connect() -> Result<SyncClient, Box<Error>> {
     match conf::SETTINGS.read() {
         Ok(settings) => {
-            let base_url = settings.elastic_base_url.as_str();
+            let base_url = settings.elastic_url.as_str();
 
             info!("Using the elasticsearch at '{}'", base_url);
 
@@ -69,9 +71,13 @@ pub fn es_connect() -> Result<SyncClient, Box<Error>> {
 fn es_search(query: Value, filter: &str) -> Result<String, Box<Error>> {
     let mut result = String::new();
 
+    let settings = conf::SETTINGS.read()?;
+
     let req = {
         let body = query;
-        SearchRequest::new(body)
+        SearchRequest::for_index_ty(
+            Cow::Borrowed(settings.elastic_index.as_str()).into_owned(),
+            "book", body)
     };
 
     let mut raw = String::new();
@@ -330,10 +336,40 @@ fn series_search_handler(req: &mut Request) -> IronResult<Response> {
     Ok(_error_response)
 }
 
+fn book_info(book_id: &str) -> Result<serde_json::Value, Box<Error>> {
+    let settings = conf::SETTINGS.read()?;
+
+    ES.document_get::<Value>(
+        index(Cow::Borrowed(settings.elastic_index.as_str()).into_owned()),
+        id(Cow::Borrowed(book_id).into_owned())
+    ).ty("book").send()?.into_document().ok_or(From::from("No matched data found"))
+}
+
+fn info_handler(req: &mut Request) -> IronResult<Response> {
+    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+    let id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
+
+    info!("Requesting book with id {}", id);
+
+    match book_info(id) {
+        Ok(nfo) => {
+            return Ok(Response::with((
+                status::Ok,
+                Header(headers::ContentType::json()),
+                nfo.to_string(),
+            )));
+        }
+        Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+    }
+
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
+}
+
 fn download_handler(req: &mut Request) -> IronResult<Response> {
     let mut _error_response = Response::with((status::BadRequest, "Server Error"));
 
-    let ref id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
+    let ref _id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
 
     error!("Responding with error: {}", _error_response);
     Ok(_error_response)
