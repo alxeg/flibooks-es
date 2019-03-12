@@ -5,9 +5,9 @@ appenders:
     encoder:
       pattern: "{d(%+)(local)} {h({l})} [{t}] [{f}:{L}] {m}{n}"
 root:
-  level: trace
+  level: warn
   appenders:
     - stdout
 loggers:
   flibooks_es:
-    level: debug
+    level: info

@@ -8,7 +8,7 @@
         {
             "type": "lldb-mi",
             "request": "launch",
-            "name": "Launch Programmmm",
+            "name": "Launch [lldb-mi]",
             "target": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
             "env": {
                 "FLI_CONFIG": "${workspaceFolder}/flibooks"
@@ -16,21 +16,9 @@
             "cwd": "${workspaceRoot}"
         },
         {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Cargo launch",
-            "cargo": {
-                "args": [
-                    "build",
-                ]
-            },
-            "program": "${cargo:program}",
-            "args": []
-        },
-        {
         "type": "lldb",
         "request": "launch",
-        "name": "Launch",
+        "name": "Launch [lldb]",
         "program": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
         "args": [],
         "env": {
