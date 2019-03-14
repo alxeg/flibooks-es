@@ -410,10 +410,10 @@ fn book_info(book_id: &str) -> Result<serde_json::Value, Box<Error>> {
     ).ty("book").send()?.into_document().ok_or(From::from("No matched data found"))
 }
 
-fn truncate(s: &str, max_chars: usize) -> &str {
+fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
-        None => s,
-        Some((idx, _)) => &s[..idx],
+        None => String::from(s),
+        Some((idx, _)) => format!("{}…", &s[..idx])
     }
 }
 
