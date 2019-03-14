@@ -428,7 +428,7 @@ fn get_out_file_name(nfo: &Value) -> String {
                 .collect();
 
     let mut authors = auth_vec.join(", ");
-    authors = truncate(&authors, 100).to_string();
+    authors = truncate(&authors, 100);
 
     if nfo["ser_no"].is_i64() {
         let ser = nfo["ser_no"].as_i64().unwrap();
