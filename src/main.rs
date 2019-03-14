@@ -6,6 +6,7 @@ extern crate iron;
 extern crate jsonpath;
 extern crate log4rs;
 extern crate persistent;
+extern crate tempfile;
 extern crate tokio_core;
 extern crate uuid;
 extern crate zip;

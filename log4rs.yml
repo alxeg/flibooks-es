@@ -10,4 +10,6 @@ root:
     - stdout
 loggers:
   flibooks_es:
-    level: info
+    level: debug
+  elastic:
+    level: trace

@@ -1,17 +1,22 @@
 use bodyparser;
 use elastic::prelude::*;
+use iron::headers::{ContentDisposition, ContentType, DispositionType, DispositionParam, Charset};
+use iron::mime::{Mime, TopLevel, SubLevel};
 use iron::modifiers::Header;
 use iron::prelude::*;
-use iron::{headers, status};
+use iron::status;
 use jsonpath::Selector;
 use persistent;
 use router::Router;
 use serde_json;
 use serde_json::Value;
+use std::borrow::Cow;
 use std::error::Error;
+use std::fs::File;
+use std::io;
 use std::io::Read;
 use std::iter::Iterator;
-use std::borrow::Cow;
+use zip;
 
 use conf;
 
@@ -173,8 +178,6 @@ fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json
 
     req["sort"].as_array_mut().unwrap().append(&mut sort);
 
-    debug!("es request {:?}", req);
-
     req
 }
 
@@ -205,7 +208,7 @@ fn langs_handler(_req: &mut Request) -> IronResult<Response> {
         Ok(search_result) => {
             return Ok(Response::with((
                 status::Ok,
-                Header(headers::ContentType::json()),
+                Header(ContentType::json()),
                 search_result,
             )));
         }
@@ -241,7 +244,7 @@ fn authors_handler(req: &mut Request) -> IronResult<Response> {
                 Ok(search_result) => {
                     return Ok(Response::with((
                         status::Ok,
-                        Header(headers::ContentType::json()),
+                        Header(ContentType::json()),
                         search_result,
                     )));
                 }
@@ -268,7 +271,7 @@ fn authors_books_handler(req: &mut Request) -> IronResult<Response> {
                 Ok(search_result) => {
                     return Ok(Response::with((
                         status::Ok,
-                        Header(headers::ContentType::json()),
+                        Header(ContentType::json()),
                         search_result,
                     )));
                 }
@@ -295,7 +298,7 @@ fn title_search_handler(req: &mut Request) -> IronResult<Response> {
                 Ok(search_result) => {
                     return Ok(Response::with((
                         status::Ok,
-                        Header(headers::ContentType::json()),
+                        Header(ContentType::json()),
                         search_result,
                     )));
                 }
@@ -321,7 +324,7 @@ fn series_search_handler(req: &mut Request) -> IronResult<Response> {
                 Ok(search_result) => {
                     return Ok(Response::with((
                         status::Ok,
-                        Header(headers::ContentType::json()),
+                        Header(ContentType::json()),
                         search_result,
                     )));
                 }
@@ -336,14 +339,6 @@ fn series_search_handler(req: &mut Request) -> IronResult<Response> {
     Ok(_error_response)
 }
 
-fn book_info(book_id: &str) -> Result<serde_json::Value, Box<Error>> {
-    let settings = conf::SETTINGS.read()?;
-
-    ES.document_get::<Value>(
-        index(Cow::Borrowed(settings.elastic_index.as_str()).into_owned()),
-        id(Cow::Borrowed(book_id).into_owned())
-    ).ty("book").send()?.into_document().ok_or(From::from("No matched data found"))
-}
 
 fn info_handler(req: &mut Request) -> IronResult<Response> {
     let mut _error_response = Response::with((status::BadRequest, "Server Error"));
@@ -355,7 +350,7 @@ fn info_handler(req: &mut Request) -> IronResult<Response> {
         Ok(nfo) => {
             return Ok(Response::with((
                 status::Ok,
-                Header(headers::ContentType::json()),
+                Header(ContentType::json()),
                 nfo.to_string(),
             )));
         }
@@ -368,9 +363,88 @@ fn info_handler(req: &mut Request) -> IronResult<Response> {
 
 fn download_handler(req: &mut Request) -> IronResult<Response> {
     let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+    let id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
 
-    let ref _id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
+    info!("Downloading book with id {}", id);
+
+    match book_info(id) {
+        Ok(nfo) => {
+            let container = nfo["container"].as_str().unwrap();
+            let file_name = format!("{}.{}", nfo["file"].as_str().unwrap(), nfo["ext"].as_str().unwrap());
+
+            let out_name = get_out_file_name(&nfo);
+
+            use tempfile::tempdir;
+            let dir = tempdir().unwrap();
+            {
+                let mut file = File::create(dir.path().join(file_name.as_str())).unwrap();
+                unpack_book(container, file_name.as_str(), &mut file).unwrap();
+            }
+            let file = dir.path().join(file_name.as_str());
+            let mut resp = Response::with((status::Ok, file));
+
+            resp.headers.set(ContentType(Mime(TopLevel::Application, SubLevel::OctetStream, vec![])));
+            resp.headers.set(ContentDisposition {
+                disposition: DispositionType::Attachment,
+                parameters: vec![DispositionParam::Filename(
+                    Charset::Ext("utf8".to_string()),
+                    None,
+                    out_name.as_bytes().to_vec()
+                )]
+            });
+            return Ok(resp);
+        }
+        Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+    }
 
     error!("Responding with error: {}", _error_response);
     Ok(_error_response)
+}
+
+fn book_info(book_id: &str) -> Result<serde_json::Value, Box<Error>> {
+    let settings = conf::SETTINGS.read()?;
+
+    ES.document_get::<Value>(
+        index(Cow::Borrowed(settings.elastic_index.as_str()).into_owned()),
+        id(Cow::Borrowed(book_id).into_owned())
+    ).ty("book").send()?.into_document().ok_or(From::from("No matched data found"))
+}
+
+fn truncate(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        None => s,
+        Some((idx, _)) => &s[..idx],
+    }
+}
+
+fn get_out_file_name(nfo: &Value) -> String {
+    let title = nfo["title"].as_str().unwrap();
+
+    let trim_chars: &[char] = &[',', ' '];
+    let auth_vec: Vec<&str> = nfo["authors"]
+            .as_array().unwrap()
+            .iter()
+                .map(|a| a.as_str().unwrap().trim_matches(trim_chars))
+                .collect();
+
+    let mut authors = auth_vec.join(", ");
+    authors = truncate(&authors, 100).to_string();
+
+    if nfo["ser_no"].is_i64() {
+        let ser = nfo["ser_no"].as_i64().unwrap();
+        if ser > 0 {
+            return format!("{} - [{}] {}", authors, ser, title);
+        }
+    }
+
+    format!("{} - {}.fb2", authors, title)
+}
+
+fn unpack_book(container: &str, file: &str, out_file: &mut File) -> Result<(), Box<Error>> {
+    let container_file = File::open(container)?;
+    let mut archive = zip::ZipArchive::new(container_file)?;
+    let mut book_content = archive.by_name(file)?;
+
+    io::copy(&mut book_content, out_file)?;
+    Ok(())
 }
