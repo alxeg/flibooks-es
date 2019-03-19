@@ -135,14 +135,14 @@ fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json
     let mut filters = match s_type {
         SearchType::TitlesSearch => {
             let mut vec = Vec::new();
-            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})));
-            make_term( &search.title,  |term| vec.push(json!({"wildcard": { "title":   term }})));
+            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})) );
+            make_term( &search.title,  |term| vec.push(json!({"wildcard": { "title":   term }})) );
             vec
         }
         SearchType::SeriesSearch => {
             let mut vec = Vec::new();
-            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})));
-            make_term( &search.series, |term| vec.push(json!({"wildcard": { "series":  term }})));
+            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})) );
+            make_term( &search.series, |term| vec.push(json!({"wildcard": { "series":  term }})) );
             vec
         }
         SearchType::AuthorsBooks => {
