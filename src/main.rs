@@ -2,6 +2,8 @@ extern crate bodyparser;
 extern crate config;
 extern crate elastic;
 extern crate futures;
+extern crate inflections;
+extern crate itertools;
 extern crate iron;
 extern crate jsonpath;
 extern crate log4rs;

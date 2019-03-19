@@ -104,6 +104,16 @@ fn es_search(query: Value, filter: &str) -> Result<String, Box<Error>> {
     Ok(result)
 }
 
+fn make_term<F>(query: &String, closure: F)
+    where F: FnMut(String) {
+        query.split_whitespace().map(|v| {
+            let mut out = "*".to_string();
+            out.push_str(&v.to_lowercase());
+            out.push_str("*");
+            out
+        }).for_each(closure);
+}
+
 fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json::Value {
     let del = if search.deleted { 1 } else { 0 };
 
@@ -125,14 +135,14 @@ fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json
     let mut filters = match s_type {
         SearchType::TitlesSearch => {
             let mut vec = Vec::new();
-            vec.push(json!({"wildcard": { "authors": search.author }}));
-            vec.push(json!({"wildcard": { "title": search.title }}));
+            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})));
+            make_term( &search.title,  |term| vec.push(json!({"wildcard": { "title":   term }})));
             vec
         }
         SearchType::SeriesSearch => {
             let mut vec = Vec::new();
-            vec.push(json!({"wildcard": { "authors": search.author }}));
-            vec.push(json!({"wildcard": { "series": search.series }}));
+            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})));
+            make_term( &search.series, |term| vec.push(json!({"wildcard": { "series":  term }})));
             vec
         }
         SearchType::AuthorsBooks => {
@@ -227,6 +237,11 @@ fn authors_handler(req: &mut Request) -> IronResult<Response> {
         Ok(Some(author_req)) => {
             debug!("Search author request:\n{:?}", author_req);
 
+            use itertools::join;
+            use inflections::case::to_title_case;
+
+            let search_query = format!(".*{}.*", join(author_req.author.split_whitespace().map(|v| to_title_case(v)), ".*"));
+
             match es_search(
                 json!({
                     "size": 0,
@@ -234,7 +249,7 @@ fn authors_handler(req: &mut Request) -> IronResult<Response> {
                         "author": {
                         "terms": {
                             "field": "authors.keyword",
-                            "include": author_req.author,
+                            "include": search_query,
                             "size": author_req.limit
                             }
                         }
