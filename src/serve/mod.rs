@@ -107,14 +107,14 @@ fn es_search(query: Value, filter: &str) -> Result<String, Box<Error>> {
 fn make_term<F>(query: &String, closure: F)
     where F: FnMut(String) {
         query.split_whitespace().map(|v| {
-            let mut out = "*".to_string();
+            let mut out = String::from("*");
             out.push_str(&v.to_lowercase());
             out.push_str("*");
             out
         }).for_each(closure);
 }
 
-fn compose_es_request(search: request::Search, s_type: SearchType) -> serde_json::Value {
+fn compose_es_request(search: &request::Search, s_type: SearchType) -> serde_json::Value {
     let del = if search.deleted { 1 } else { 0 };
 
     let mut req = json!({
@@ -279,8 +279,8 @@ fn authors_books_handler(req: &mut Request) -> IronResult<Response> {
 
     match body {
         Ok(Some(search)) => {
-            debug!("Author's books request:\n{:?}", search);
-            let req = compose_es_request(search, SearchType::AuthorsBooks);
+            debug!("Author's books request:\n{:?}", &search);
+            let req = compose_es_request(&search, SearchType::AuthorsBooks);
 
             match es_search(req, "$.hits.hits") {
                 Ok(search_result) => {
@@ -307,8 +307,8 @@ fn title_search_handler(req: &mut Request) -> IronResult<Response> {
     let body = req.get::<bodyparser::Struct<request::Search>>();
     match body {
         Ok(Some(search)) => {
-            debug!("Books title search:\n{:?}", search);
-            let req = compose_es_request(search, SearchType::TitlesSearch);
+            debug!("Books title search:\n{:?}", &search);
+            let req = compose_es_request(&search, SearchType::TitlesSearch);
             match es_search(req, "$.hits.hits") {
                 Ok(search_result) => {
                     return Ok(Response::with((
@@ -333,8 +333,8 @@ fn series_search_handler(req: &mut Request) -> IronResult<Response> {
     let body = req.get::<bodyparser::Struct<request::Search>>();
     match body {
         Ok(Some(search)) => {
-            debug!("Books series search:\n{:?}", search);
-            let req = compose_es_request(search, SearchType::SeriesSearch);
+            debug!("Books series search:\n{:?}", &search);
+            let req = compose_es_request(&search, SearchType::SeriesSearch);
             match es_search(req, "$.hits.hits") {
                 Ok(search_result) => {
                     return Ok(Response::with((
