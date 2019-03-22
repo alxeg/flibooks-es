@@ -20,7 +20,7 @@ use zip;
 
 use conf;
 
-pub mod request;
+pub(crate) mod request;
 
 const MAX_BODY_LENGTH: usize = 1024 * 1024 * 10;
 

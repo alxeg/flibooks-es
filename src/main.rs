@@ -26,10 +26,10 @@ extern crate log;
 #[macro_use]
 extern crate clap;
 
-pub mod conf;
-pub mod logger;
-pub mod parse;
-pub mod serve;
+pub(crate) mod conf;
+pub(crate) mod logger;
+pub(crate) mod parse;
+pub(crate) mod serve;
 
 use clap::{App, Arg, SubCommand};
 
