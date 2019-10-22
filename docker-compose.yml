@@ -1,7 +1,7 @@
 version: "3.4"
 services:
   elastic:
-    image: docker.elastic.co/elasticsearch/elasticsearch:6.4.0
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.4.0
     environment:
       - discovery.type=single-node
       - TAKE_FILE_OWNERSHIP=true
@@ -12,7 +12,7 @@ services:
       - elnet
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:6.4.0
+    image: docker.elastic.co/kibana/kibana:7.4.0
     environment:
       - SERVER_NAME=kibana
       - ELASTICSEARCH_URL=http://elastic:9200
