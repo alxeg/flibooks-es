@@ -8,7 +8,7 @@ use std::path::Path;
 
 use conf;
 
-pub fn setup() -> Result<(), Box<Error>> {
+pub fn setup() -> Result<(), Box<dyn Error>> {
     let settings = conf::SETTINGS.read()?;
     let log_config = &settings.log_config.as_str();
 

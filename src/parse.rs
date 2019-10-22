@@ -11,7 +11,7 @@ use zip;
 
 use conf;
 
-pub fn start(file_name: &str) -> Result<(), Box<Error>> {
+pub fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
     let mut core = Core::new()?;
 
     let settings = conf::SETTINGS.read()?;
@@ -30,7 +30,7 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
     let mut archive = zip::ZipArchive::new(file)?;
 
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
+        let file = archive.by_index(i)?;
 
         if file.name().ends_with(".inp") {
             let mut bulk = String::new();
@@ -38,7 +38,7 @@ pub fn start(file_name: &str) -> Result<(), Box<Error>> {
             let inpx = format!("{}", file.name());
             let container = inpx.replace(".inp", ".zip");
 
-            let mut breader = BufReader::new(file);
+            let breader = BufReader::new(file);
             for line in breader.lines() {
                 let l = line?;
                 let mut rec = process_book(l.split("\x04").collect());

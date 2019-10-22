@@ -34,7 +34,7 @@ lazy_static! {
     pub static ref ES: SyncClient = es_connect().unwrap();
 }
 
-pub fn start() -> Result<(), Box<Error>> {
+pub fn start() -> Result<(), Box<dyn Error>> {
     let settings = conf::SETTINGS.read()?;
 
     let listen = &settings.listen_address;
@@ -60,7 +60,7 @@ pub fn start() -> Result<(), Box<Error>> {
     Ok(())
 }
 
-pub fn es_connect() -> Result<SyncClient, Box<Error>> {
+pub fn es_connect() -> Result<SyncClient, Box<dyn Error>> {
     match conf::SETTINGS.read() {
         Ok(settings) => {
             let base_url = settings.elastic_url.as_str();
@@ -73,7 +73,7 @@ pub fn es_connect() -> Result<SyncClient, Box<Error>> {
     }
 }
 
-fn es_search(query: Value, filter: &str) -> Result<String, Box<Error>> {
+fn es_search(query: Value, filter: &str) -> Result<String, Box<dyn Error>> {
     let mut result = String::new();
 
     let settings = conf::SETTINGS.read()?;
@@ -416,7 +416,7 @@ fn download_handler(req: &mut Request) -> IronResult<Response> {
     Ok(_error_response)
 }
 
-fn book_info(book_id: &str) -> Result<serde_json::Value, Box<Error>> {
+fn book_info(book_id: &str) -> Result<serde_json::Value, Box<dyn Error>> {
     let settings = conf::SETTINGS.read()?;
 
     ES.document_get::<Value>(
@@ -455,7 +455,7 @@ fn get_out_file_name(nfo: &Value) -> String {
     format!("{} - {}.fb2", authors, title)
 }
 
-fn unpack_book(container: &str, file: &str, out_file: &mut File) -> Result<(), Box<Error>> {
+fn unpack_book(container: &str, file: &str, out_file: &mut File) -> Result<(), Box<dyn Error>> {
     let container_file = File::open(container)?;
     let mut archive = zip::ZipArchive::new(container_file)?;
     let mut book_content = archive.by_name(file)?;
