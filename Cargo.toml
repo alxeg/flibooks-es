@@ -1,6 +1,6 @@
 [package]
 name = "flibooks-es"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["alxeg <alx.egorov@gmail.com>"]
 
 [dependencies]
@@ -21,6 +21,7 @@ tempfile = "^3.1.0"
 tokio-core = "^0.1.17"
 uuid = { version = "^0.8.1", features = ["serde", "v4"] }
 zip = "^0.5.3"
+walkdir = "^2.2.9"
 jsonpath = "^0.1.1"
 
 ## serve dependencies

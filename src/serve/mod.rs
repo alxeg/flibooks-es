@@ -12,17 +12,24 @@ use serde_json;
 use serde_json::Value;
 use std::borrow::Cow;
 use std::error::Error;
+use std::fs;
 use std::fs::File;
 use std::io;
-use std::io::Read;
+use std::io::{Read, Write, Seek};
 use std::iter::Iterator;
+use std::path::Path;
+use tempfile::tempdir;
+use uuid::Uuid;
+use walkdir::{WalkDir, DirEntry};
 use zip;
+use zip::write::FileOptions;
 
 use conf;
 
 pub(crate) mod request;
 
 const MAX_BODY_LENGTH: usize = 1024 * 1024 * 10;
+const ZIP_METHOD: zip::CompressionMethod = zip::CompressionMethod::Deflated;
 
 enum SearchType {
     AuthorsBooks,
@@ -47,6 +54,7 @@ pub fn start() -> Result<(), Box<dyn Error>> {
         series_search:  post "/api/book/series"         => series_search_handler,
         book_info:      get  "/api/book/:id"            => info_handler,
         book_download:  get  "/api/book/:id/download"   => download_handler,
+        book_archive:   post "/api/book/archive"        => archive_handler,
     };
 
     let mut chain = Chain::new(router);
@@ -389,7 +397,6 @@ fn download_handler(req: &mut Request) -> IronResult<Response> {
 
             let out_name = get_out_file_name(&nfo);
 
-            use tempfile::tempdir;
             let dir = tempdir().unwrap();
             {
                 let mut file = File::create(dir.path().join(file_name.as_str())).unwrap();
@@ -410,6 +417,72 @@ fn download_handler(req: &mut Request) -> IronResult<Response> {
             return Ok(resp);
         }
         Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+    }
+
+    error!("Responding with error: {}", _error_response);
+    Ok(_error_response)
+}
+
+fn archive_handler(req: &mut Request) -> IronResult<Response> {
+    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
+    info!("Requested books archive download");
+
+    let body = req.get::<bodyparser::Struct<request::Download>>();
+    match body {
+        Ok(Some(search)) => {
+            let temp_dir = tempdir().unwrap();
+            let dir = temp_dir.path().join(format!("flibooks-{}", Uuid::new_v4()));
+            let dir_path = &dir.to_string_lossy().into_owned();
+
+            fs::create_dir_all(&dir).unwrap();
+            info!("Target folder: {}", dir_path);
+
+            for id in search.ids.iter() {
+                    match book_info(id) {
+                        Ok(nfo) => {
+                            debug!("Retrieving book with id {}", id);
+                            let container = nfo["container"].as_str().unwrap();
+                            let file_name = format!("{}.{}", nfo["file"].as_str().unwrap(), nfo["ext"].as_str().unwrap());
+                            let out_name = get_out_file_name(&nfo);
+                            {
+                                let mut file = File::create(dir.join(out_name.as_str())).unwrap();
+                                unpack_book(container, file_name.as_str(), &mut file).unwrap();
+                            }
+                        }
+                        Err(_) => error!("Cannot find the book: {}", id)
+                    }
+            }
+
+            let zip_name = format!("{}.zip", dir_path);
+            let zip_path = Path::new(&zip_name);
+            {
+                let file = File::create(zip_path).unwrap();
+
+                let walkdir = WalkDir::new(dir_path);
+                let it = walkdir.into_iter();
+
+                // compress folder
+                zip_dir(&mut it.filter_map(|e| e.ok()), dir_path, &file, ZIP_METHOD).unwrap();
+            }
+
+            let out_name = zip_path.file_name().unwrap().to_string_lossy().into_owned();
+
+            let mut resp = Response::with((status::Ok, zip_path));
+            resp.headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Ext(String::from("zip")), vec![])));
+            resp.headers.set(ContentDisposition {
+                disposition: DispositionType::Attachment,
+                parameters: vec![DispositionParam::Filename(
+                    Charset::Ext("utf8".to_string()),
+                    None,
+                    out_name.as_bytes().to_vec()
+                )]
+            });
+            return Ok(resp);
+        }
+        _ => {
+            _error_response = Response::with((status::BadRequest, "Failed to parse download request"))
+        }
+
     }
 
     error!("Responding with error: {}", _error_response);
@@ -448,7 +521,7 @@ fn get_out_file_name(nfo: &Value) -> String {
     if nfo["ser_no"].is_i64() {
         let ser = nfo["ser_no"].as_i64().unwrap();
         if ser > 0 {
-            return format!("{} - [{}] {}", authors, ser, title);
+            return format!("{} - [{}] {}.fb2", authors, ser, title);
         }
     }
 
@@ -463,3 +536,39 @@ fn unpack_book(container: &str, file: &str, out_file: &mut File) -> Result<(), B
     io::copy(&mut book_content, out_file)?;
     Ok(())
 }
+
+fn zip_dir<T>(it: &mut dyn Iterator<Item=DirEntry>, prefix: &str, writer: T, method: zip::CompressionMethod)
+              -> zip::result::ZipResult<()>
+    where T: Write+Seek
+{
+    let mut zip = zip::ZipWriter::new(writer);
+    let options = FileOptions::default()
+        .compression_method(method)
+        .unix_permissions(0o755);
+
+    let mut buffer = Vec::new();
+    for entry in it {
+        let path = entry.path();
+        let name = path.strip_prefix(Path::new(prefix)).unwrap();
+
+        // Write file or directory explicitly
+        // Some unzip tools unzip files with directory paths correctly, some do not!
+        if path.is_file() {
+            debug!("adding file {:?} as {:?} ...", path, name);
+            zip.start_file_from_path(name, options)?;
+            let mut f = File::open(path)?;
+
+            f.read_to_end(&mut buffer)?;
+            zip.write_all(&*buffer)?;
+            buffer.clear();
+        } else if name.as_os_str().len() != 0 {
+            // Only if not root! Avoids path spec / warning
+            // and mapname conversion failed error on unzip
+            debug!("adding dir {:?} as {:?} ...", path, name);
+            zip.add_directory_from_path(name, options)?;
+        }
+    }
+    zip.finish()?;
+    Result::Ok(())
+}
+

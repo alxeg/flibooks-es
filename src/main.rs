@@ -11,6 +11,7 @@ extern crate persistent;
 extern crate tempfile;
 extern crate tokio_core;
 extern crate uuid;
+extern crate walkdir;
 extern crate zip;
 
 #[macro_use]

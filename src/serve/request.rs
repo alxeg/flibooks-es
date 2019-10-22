@@ -17,8 +17,14 @@ pub struct Search {
     pub limit: u32,
     #[serde(default = "default_deleted")]
     pub deleted: bool,
-    #[serde(default = "default_langs")]
+    #[serde(default = "default_vec")]
     pub langs: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Download {
+    #[serde(default = "default_vec")]
+    pub ids: Vec<String>,
 }
 
 pub fn default_limit() -> u32 {
@@ -33,6 +39,6 @@ pub fn default_empty_string() -> String {
     "".to_string()
 }
 
-pub fn default_langs() -> Vec<String> {
+pub fn default_vec() -> Vec<String> {
     Vec::new()
 }

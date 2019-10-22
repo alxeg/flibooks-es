@@ -12,4 +12,4 @@ loggers:
   flibooks_es:
     level: debug
   elastic:
-    level: trace
+    level: warn
