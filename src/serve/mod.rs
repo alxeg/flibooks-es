@@ -549,24 +549,23 @@ fn zip_dir<T>(it: &mut dyn Iterator<Item=DirEntry>, prefix: &str, writer: T, met
     let mut buffer = Vec::new();
     for entry in it {
         let path = entry.path();
-        let name = path.strip_prefix(Path::new(prefix)).unwrap();
-        let name_str = name.to_str().unwrap();
+        let name = path.strip_prefix(Path::new(prefix)).unwrap().to_str().unwrap();
 
         // Write file or directory explicitly
         // Some unzip tools unzip files with directory paths correctly, some do not!
         if path.is_file() {
             debug!("adding file {:?} as {:?} ...", path, name);
-            zip.start_file(name_str, options)?;
+            zip.start_file(name, options)?;
             let mut f = File::open(path)?;
 
             f.read_to_end(&mut buffer)?;
             zip.write_all(&*buffer)?;
             buffer.clear();
-        } else if name.as_os_str().len() != 0 {
+        } else if name.chars().count() != 0 {
             // Only if not root! Avoids path spec / warning
             // and mapname conversion failed error on unzip
             debug!("adding dir {:?} as {:?} ...", path, name);
-            zip.add_directory(name_str, options)?;
+            zip.add_directory(name, options)?;
         }
     }
     zip.finish()?;
