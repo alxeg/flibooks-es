@@ -5,22 +5,22 @@ authors = ["alxeg <alx.egorov@gmail.com>"]
 
 [dependencies]
 elastic = "^0.20.10"
-clap = "^2.33.1"
-config = "^0.11.0"
+clap = { version = "3.1.10", features = ["derive", "cargo"] }
+config = "^0.13.1"
 futures = "^0.1.29"
 futures-cpupool = "^0.1.8"
 inflections = "1.1.1"
-itertools = "0.10.0"
+itertools = "0.10.3"
 lazy_static = "^1.4.0"
-log = "^0.4.14"
+log = "^0.4.16"
 log4rs = "^1.0.0"
-serde = "^1.0.125"
-serde_derive = "^1.0.125"
-serde_json = "^1.0.64"
-tempfile = "^3.2.0"
+serde = "^1.0.136"
+serde_derive = "^1.0.136"
+serde_json = "^1.0.79"
+tempfile = "^3.3.0"
 tokio-core = "^0.1.18"
-uuid = { version = "^0.8.2", features = ["serde", "v4"] }
-zip = "^0.5.12"
+uuid = { version = "^1.0.0", features = ["serde", "v4"] }
+zip = "^0.6.2"
 walkdir = "^2.3.2"
 jsonpath = "^0.1.1"
 

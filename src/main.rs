@@ -24,7 +24,7 @@ extern crate serde_derive;
 extern crate lazy_static;
 #[macro_use]
 extern crate log;
-#[macro_use]
+
 extern crate clap;
 
 pub(crate) mod conf;
@@ -32,20 +32,20 @@ pub(crate) mod logger;
 pub(crate) mod parse;
 pub(crate) mod serve;
 
-use clap::{App, Arg, SubCommand};
+use clap::crate_version;
 
 fn main() {
     logger::setup().unwrap();
 
-    let matches = App::new("flibooks-es")
+    let matches = clap::Command::new("flibooks-es")
         .version(crate_version!())
         .about("Flibusta's backups books search (via ES)")
         .subcommand(
-            SubCommand::with_name("parse")
+            clap::Command::new("parse")
                 .about("Parses the flibooks backup index file")
                 .arg(
-                    Arg::with_name("inpx")
-                        .short("i")
+                    clap::Arg::new("inpx")
+                        .short('i')
                         .long("inpx")
                         .value_name("INPX_FILE")
                         .help("Flibooks backup index file to be parsed")
@@ -53,7 +53,7 @@ fn main() {
                         .takes_value(true),
                 ),
         )
-        .subcommand(SubCommand::with_name("serve").about("Serves the REST API (Default)"))
+        .subcommand(clap::Command::new("serve").about("Serves the REST API (Default)"))
         .get_matches();
 
     match matches.subcommand_matches("parse") {

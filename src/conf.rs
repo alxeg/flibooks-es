@@ -17,27 +17,17 @@ lazy_static! {
 
 impl Settings {
     pub fn new() -> Result<Self, ConfigError> {
-        let mut s = Config::new();
+        let s = Config::builder()
+            .set_default("log_level", "info")?
+            .set_default("log_config", "log4rs.yml")?
+            .set_default("elastic_url", "http://localhost:9200")?
+            .set_default("elastic_index", "flibooks")?
+            .set_default("listen_address", "localhost:3000")?
+            .add_source(File::with_name("flibooks").required(false))
+            .add_source(File::with_name(env::var("FLI_CONFIG").unwrap_or_default().as_str()).required(false))
+            .add_source(Environment::with_prefix("fli"))
+            .build()?;
 
-        // set defaults
-        s.set_default("log_level", "info")?;
-        s.set_default("log_config", "log4rs.yml")?;
-        s.set_default("elastic_url", "http://localhost:9200")?;
-        s.set_default("elastic_index", "flibooks")?;
-        s.set_default("listen_address", "localhost:3000")?;
-
-        s.merge(File::with_name("flibooks").required(false))?;
-
-        match env::var("FLI_CONFIG") {
-            Ok(config_file) => {
-                s.merge(File::with_name(config_file.as_str()))?;
-            }
-            _ => (),
-        }
-
-        s.merge(Environment::with_prefix("fli"))?;
-
-        // parse to struct
-        s.try_into()
+            s.try_deserialize()
     }
 }
