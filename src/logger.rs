@@ -6,7 +6,7 @@ use log4rs::encode::pattern::PatternEncoder;
 use std::error::Error;
 use std::path::Path;
 
-use conf;
+use crate::conf;
 
 pub fn setup() -> Result<(), Box<dyn Error>> {
     let settings = conf::SETTINGS.read()?;

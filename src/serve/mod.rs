@@ -24,7 +24,7 @@ use walkdir::{WalkDir, DirEntry};
 use zip;
 use zip::write::FileOptions;
 
-use conf;
+use crate::conf;
 
 pub(crate) mod request;
 
