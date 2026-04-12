@@ -20,7 +20,7 @@
         "request": "launch",
         "name": "Launch [lldb]",
         "program": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
-        "args": [],
+        "args": ["parse", "--inpx", "flibusta_fb2_local.inpx"],
         "env": {
             "FLI_CONFIG": "${workspaceFolder}/flibooks"
         },

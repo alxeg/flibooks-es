@@ -1,3 +1,4 @@
+use elastic::http::header::{Authorization, Basic};
 use elastic::prelude::*;
 use futures::Future;
 use serde_json;
@@ -16,11 +17,19 @@ pub fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
 
     let settings = conf::SETTINGS.read()?;
     let base_url = (&settings.elastic_url).as_str();
+    let login = (&settings.elastic_login).as_str();
+    let password = (&settings.elastic_password).as_str();
     let index = (&settings.elastic_index).as_str();
 
     info!("Using the elasticsearch at '{}'", base_url);
 
     let client = AsyncClientBuilder::new()
+        .params(|p| {
+            p.header(Authorization( Basic{
+                username: login.to_owned(),
+                password: Some(password.to_owned())
+            }))
+        })
         .base_url(base_url)
         .build(&core.handle())?;
 
