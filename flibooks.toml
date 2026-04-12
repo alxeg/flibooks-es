@@ -1,4 +1,4 @@
 log_level = "debug"
 # elastic_base_url = "http://10.100.4.5:9200/flibooks"
-elastic_base_url = "http://localhost:9200"
+elastic_url = "http://localhost:9200"
 elastic_password = "afsqSFq3421!"

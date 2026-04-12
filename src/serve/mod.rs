@@ -1,4 +1,5 @@
 use bodyparser;
+use elastic::http::header::{Authorization, Basic};
 use elastic::prelude::*;
 use iron::headers::{ContentDisposition, ContentType, DispositionType, DispositionParam, Charset};
 use iron::mime::{Mime, TopLevel, SubLevel};
@@ -75,7 +76,15 @@ pub fn es_connect() -> Result<SyncClient, Box<dyn Error>> {
 
             info!("Using the elasticsearch at '{}'", base_url);
 
-            Ok(SyncClientBuilder::new().base_url(base_url).build()?)
+            Ok(SyncClientBuilder::new()
+                .base_url(base_url)
+                .params(|p| {
+                        p.header(Authorization(Basic{
+                            username: settings.elastic_login.to_owned(),
+                            password: Some(settings.elastic_password.to_owned())
+                    }))}
+                )
+                .build()?)
         }
         _ => Err(From::from("Failed to read settings")),
     }

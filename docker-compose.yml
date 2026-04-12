@@ -3,10 +3,11 @@ services:
     image: opensearchproject/opensearch:latest
     container_name: opensearch
     environment:
-      - discovery.type=single-node
-      - node.name=opensearch
-      - TAKE_FILE_OWNERSHIP=true
-      - OPENSEARCH_INITIAL_ADMIN_PASSWORD=afsqSFq3421!
+      - 'discovery.type=single-node'
+      - 'plugins.security.disabled=true'
+      - 'node.name=opensearch'
+      - 'TAKE_FILE_OWNERSHIP=true'
+      - 'OPENSEARCH_INITIAL_ADMIN_PASSWORD=afsqSFq3421!'
     ports:
       - 9200:9200
       - 9300:9300
@@ -17,10 +18,14 @@ services:
     image: opensearchproject/opensearch-dashboards:latest
     container_name: dashboards
     environment:
-      SERVER_NAME: dashboards
-      OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
-      OPENSEARCH_USERNAME: admin
-      OPENSEARCH_PASSWORD: afsqSFq3421!
+      - 'SERVER_NAME=dashboards'
+      - 'OPENSEARCH_HOSTS=["http://opensearch:9200"]'
+      - 'DISABLE_SECURITY_DASHBOARDS_PLUGIN=true'
+      # - 'OPENSEARCH_USERNAME=admin'
+      # - 'OPENSEARCH_PASSWORD=afsqSFq3421!'
+      # SERVER_SSL_ENABLED: false
+      # OPENSEARCH_SSL_VERIFICATIONMODE: none
+      # OPENSEARCH_HOSTS: '["https://opensearch:9200"]'
     ports:
       - 5601:5601
     links:
