@@ -1,4 +1,5 @@
 use log::LevelFilter;
+use log::info;
 use log4rs;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config, Root};

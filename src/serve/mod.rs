@@ -1,165 +1,209 @@
-use bodyparser;
-use elastic::http::header::{Authorization, Basic};
-use elastic::prelude::*;
-use iron::headers::{ContentDisposition, ContentType, DispositionType, DispositionParam, Charset};
-use iron::mime::{Mime, TopLevel, SubLevel};
-use iron::modifiers::Header;
-use iron::prelude::*;
-use iron::status;
-use jsonpath::Selector;
-use persistent;
-use router::Router;
-use serde_json;
-use serde_json::Value;
-use std::borrow::Cow;
+use axum::extract::{Json, Path};
+use axum::response::IntoResponse;
+use axum::response::Response;
+use axum::routing::{get, post};
+use axum::Router;
+use axum::debug_handler;
+use log::error;
+use log::info;
+use itertools::Itertools;
+use reqwest::header::CONTENT_TYPE;
+use serde_json::{json, Value};
 use std::error::Error;
-use std::fs;
-use std::fs::File;
-use std::io;
-use std::io::{Read, Write, Seek};
-use std::iter::Iterator;
-use std::path::Path;
-use tempfile::tempdir;
+use std::io::{Read, Write};
 use uuid::Uuid;
-use walkdir::{WalkDir, DirEntry};
-use zip;
-use zip::write::FileOptions;
+use zip::ZipArchive;
 
 use crate::conf;
+use crate::serve::request::{Author, Download, Search};
 
 pub(crate) mod request;
 
-const MAX_BODY_LENGTH: usize = 1024 * 1024 * 10;
-const ZIP_METHOD: zip::CompressionMethod = zip::CompressionMethod::Deflated;
-
-enum SearchType {
-    AuthorsBooks,
-    TitlesSearch,
-    SeriesSearch,
+lazy_static::lazy_static! {
+    static ref ES_CLIENT: EsClient = EsClient::new().unwrap();
 }
 
-lazy_static! {
-    pub static ref ES: SyncClient = es_connect().unwrap();
-}
-
-pub fn start() -> Result<(), Box<dyn Error>> {
+pub async fn start() -> Result<(), Box<dyn Error>> {
     let settings = conf::SETTINGS.read()?;
 
-    let listen = &settings.listen_address;
+    let addr = settings.listen_address.clone();
+    let app = build_router();
 
-    let router = router!{
-        authors:        post "/api/author/search"       => authors_handler,
-        author_books:   post "/api/author/books"        => authors_books_handler,
-        langs:          get  "/api/book/langs"          => langs_handler,
-        title_search:   post "/api/book/search"         => title_search_handler,
-        series_search:  post "/api/book/series"         => series_search_handler,
-        book_info:      get  "/api/book/:id"            => info_handler,
-        book_download:  get  "/api/book/:id/download"   => download_handler,
-        book_archive:   post "/api/book/archive"        => archive_handler,
-    };
-
-    let mut chain = Chain::new(router);
-    chain.link_before(persistent::Read::<bodyparser::MaxBodyLength>::one(
-        MAX_BODY_LENGTH,
-    ));
-
-    info!("Serving the API on {}", listen);
-    Iron::new(chain).http(listen)?;
+    info!("Serving the API on {}", addr);
+    let listener = tokio::net::TcpListener::bind(&addr).await?;
+    axum::serve(listener, app).await?;
 
     Ok(())
 }
 
-pub fn es_connect() -> Result<SyncClient, Box<dyn Error>> {
-    match conf::SETTINGS.read() {
-        Ok(settings) => {
-            let base_url = settings.elastic_url.as_str();
+fn build_router() -> axum::Router {
+    Router::new()
+        .route("/api/author/search", post(authors_handler))
+        .route("/api/author/books", post(authors_books_handler))
+        .route("/api/book/langs", get(langs_handler))
+        .route("/api/book/search", post(title_search_handler))
+        .route("/api/book/series", post(series_search_handler))
+        .route("/api/book/:id", get(info_handler))
+        .route("/api/book/:id/download", get(download_handler))
+        .route("/api/book/archive", post(archive_handler))
+}
 
-            info!("Using the elasticsearch at '{}'", base_url);
+struct EsClient {
+    client: reqwest::Client,
+    url: String,
+    password: String,
+}
 
-            Ok(SyncClientBuilder::new()
-                .base_url(base_url)
-                .params(|p| {
-                        p.header(Authorization(Basic{
-                            username: settings.elastic_login.to_owned(),
-                            password: Some(settings.elastic_password.to_owned())
-                    }))}
-                )
-                .build()?)
+impl EsClient {
+    fn new() -> Result<Self, String> {
+        let settings = conf::SETTINGS.read();
+        let s = match settings {
+            Ok(s) => s,
+            Err(_) => return Err("Failed to read settings".to_string()),
+        };
+        let url = s.elastic_url.clone();
+        let password = s.elastic_password.clone();
+        // auth_header is computed but not used - we use bearer_auth instead
+
+
+        Ok(EsClient {
+            client: reqwest::Client::new(),
+            url,
+            password,
+        })
+    }
+
+    async fn search(&self, index: &str, body: Value) -> Result<Value, String> {
+        let url = format!("{}/{}/_search", self.url, index);
+        let response = self
+            .client
+            .post(&url)
+            .header(CONTENT_TYPE, "application/json")
+            .bearer_auth(&self.password)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if response.status().is_success() {
+            response.json().await.map_err(|e| e.to_string())
+        } else {
+            Err(format!("Search failed: {}", response.status()))
         }
-        _ => Err(From::from("Failed to read settings")),
+    }
+
+    async fn get(&self, index: &str, id: &str) -> Result<Value, String> {
+        let url = format!("{}/{}/_doc/{}", self.url, index, id);
+        let response = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.password)
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if response.status().is_success() {
+            let body: Value = response.json().await.map_err(|e| e.to_string())?;
+            if let Some(source) = body.get("_source") {
+                Ok(source.clone())
+            } else {
+                Err("Document not found".to_string())
+            }
+        } else {
+            Err("Document not found".to_string())
+        }
     }
 }
 
-fn es_search(query: Value, filter: &str) -> Result<String, Box<dyn Error>> {
-    let mut result = String::new();
+// Simple JSONPath-like extraction for common patterns
+fn extract_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
+    let parts: Vec<&str> = path
+        .trim_start_matches('$')
+        .split('.')
+        .filter(|s| !s.is_empty())
+        .collect();
 
-    let settings = conf::SETTINGS.read()?;
+    let mut current: &'a Value = value;
+    for part in parts {
+        if let Some(obj) = current.as_object() {
+            if part.starts_with('[') && part.ends_with(']') {
+                let idx: usize = part[1..part.len() - 1].parse().ok()?;
+                if let Some(arr) = obj.get(&format!("[{}]", idx)) {
+                    current = arr;
+                } else if let Some(arr) = obj.get(part.trim_start_matches('[').trim_end_matches(']')) {
+                    current = arr;
+                } else {
+                    return None;
+                }
+            } else {
+                current = obj.get(part)?;
+            }
+        } else if let Some(arr) = current.as_array() {
+            let idx: usize = part.parse().ok()?;
+            current = arr.get(idx)?;
+        } else {
+            return None;
+        }
+    }
+    Some(current)
+}
 
-    let req = {
-        let body = query;
-        SearchRequest::for_index_ty(
-            Cow::Borrowed(settings.elastic_index.as_str()).into_owned(),
-            "book", body)
+async fn es_search(query: Value, filter: &str) -> Result<String, String> {
+    let index = {
+        let s = conf::SETTINGS.read();
+        match s {
+            Ok(s) => s.elastic_index.clone(),
+            Err(_) => return Err("Failed to read settings".to_string()),
+        }
     };
 
-    let mut raw = String::new();
-    ES.request(req)
-        .send()?
-        .into_raw()
-        .read_to_string(&mut raw)?;
-    let json: Value = serde_json::from_str(raw.as_str())?;
+    let result = ES_CLIENT.search(&index, query).await.map_err(|e| e.to_string())?;
+    let found = extract_path(&result, filter);
 
-    let selector = Selector::new(filter)?;
-    let mut found = selector.find(&json);
-    match found.next() {
-        Some(filtered) => {
-            result.push_str(&serde_json::to_string(&(*filtered))?.to_string());
-        }
-        None => return Err(From::from("No matched data found")),
+    match found {
+        Some(filtered) => Ok(serde_json::to_string(filtered).map_err(|e| e.to_string())?),
+        None => Err("No matched data found".to_string()),
     }
-
-    Ok(result)
 }
 
-fn make_term<F>(query: &String, closure: F)
-    where F: FnMut(String) {
-        query.split_whitespace().map(|v| {
-            let mut out = String::from("*");
-            out.push_str(&v.to_lowercase());
-            out.push_str("*");
-            out
-        }).for_each(closure);
+fn make_term<F>(query: &str, closure: F)
+where
+    F: FnMut(String),
+{
+    query
+        .split_whitespace()
+        .map(|v| format!("*{}*", v.to_lowercase()))
+        .for_each(closure);
 }
 
-fn compose_es_request(search: &request::Search, s_type: SearchType) -> serde_json::Value {
+fn compose_es_request(search: &Search, s_type: SearchType) -> Value {
     let del = if search.deleted { 1 } else { 0 };
 
     let mut req = json!({
         "size": search.limit,
-        "sort": [
-        ],
+        "sort": [],
         "query": {
             "bool": {
                 "filter": [{
                     "terms": {
-                        "del": [ 0, del ]
+                        "del": [0, del]
                     }
                 }]
             }
-    }});
+        }
+    });
 
-    // setup filters
     let mut filters = match s_type {
         SearchType::TitlesSearch => {
             let mut vec = Vec::new();
-            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})) );
-            make_term( &search.title,  |term| vec.push(json!({"wildcard": { "title":   term }})) );
+            make_term(&search.author, |term| vec.push(json!({"wildcard": {"authors": term}})));
+            make_term(&search.title, |term| vec.push(json!({"wildcard": {"title": term}})));
             vec
         }
         SearchType::SeriesSearch => {
             let mut vec = Vec::new();
-            make_term( &search.author, |term| vec.push(json!({"wildcard": { "authors": term }})) );
-            make_term( &search.series, |term| vec.push(json!({"wildcard": { "series":  term }})) );
+            make_term(&search.author, |term| vec.push(json!({"wildcard": {"authors": term}})));
+            make_term(&search.series, |term| vec.push(json!({"wildcard": {"series": term}})));
             vec
         }
         SearchType::AuthorsBooks => {
@@ -181,7 +225,9 @@ fn compose_es_request(search: &request::Search, s_type: SearchType) -> serde_jso
         }));
     }
 
-    req["query"].as_object_mut().unwrap()["bool"]
+    req["query"]
+        .as_object_mut()
+        .unwrap()["bool"]
         .as_object_mut()
         .unwrap()["filter"]
         .as_array_mut()
@@ -190,17 +236,9 @@ fn compose_es_request(search: &request::Search, s_type: SearchType) -> serde_jso
 
     let mut sort = match s_type {
         SearchType::SeriesSearch | SearchType::AuthorsBooks => {
-            let mut vec = Vec::new();
-            vec.push(json!("series.keyword"));
-            vec.push(json!("ser_no"));
-            vec.push(json!("title.keyword"));
-            vec
+            vec![json!("series.keyword"), json!("ser_no"), json!("title.keyword")]
         }
-        SearchType::TitlesSearch => {
-            let mut vec = Vec::new();
-            vec.push(json!("title.keyword"));
-            vec
-        }
+        SearchType::TitlesSearch => vec![json!("title.keyword")],
     };
 
     req["sort"].as_array_mut().unwrap().append(&mut sort);
@@ -208,327 +246,315 @@ fn compose_es_request(search: &request::Search, s_type: SearchType) -> serde_jso
     req
 }
 
-fn langs_handler(_req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    debug!("Get langs request");
+async fn langs_handler() -> impl IntoResponse {
+    let query = json!({
+        "size": 0,
+        "query": {
+            "match": {
+                "del": "0"
+            }
+        },
+        "aggs": {
+            "lang": {
+                "terms": {
+                    "field": "lang.keyword",
+                    "include": ".*",
+                    "size": 100
+                }
+            }
+        }
+    });
 
-    // TODO: add ability to include langs for deleted books too
-    match es_search(
-        json!({
-            "size": 0,
-            "query": {
-                "match" : {
-                    "del":"0"
-                }
-            },
-            "aggs": {
-                "lang": {
-                    "terms": {
-                        "field": "lang.keyword",
-                        "include":  ".*",
-                        "size": 100
-                    }
-                }
-        }}),
-        "$.aggregations.lang.buckets",
-    ) {
+    match es_search(query, "$.aggregations.lang.buckets").await {
         Ok(search_result) => {
-            return Ok(Response::with((
-                status::Ok,
-                Header(ContentType::json()),
-                search_result,
-            )));
-        }
-        Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
-    }
-
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
-}
-
-fn authors_handler(req: &mut Request) -> IronResult<Response> {
-    let body = req.get::<bodyparser::Struct<request::Author>>();
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-
-    match body {
-        Ok(Some(author_req)) => {
-            debug!("Search author request:\n{:?}", author_req);
-
-            use itertools::join;
-            use inflections::case::to_title_case;
-
-            let search_query = format!(".*{}.*", join(author_req.author.split_whitespace().map(|v| to_title_case(v)), ".*"));
-
-            match es_search(
-                json!({
-                    "size": 0,
-                    "aggs": {
-                        "author": {
-                        "terms": {
-                            "field": "authors.keyword",
-                            "include": search_query,
-                            "size": author_req.limit
-                            }
-                        }
-                }}),
-                "$.aggregations.author.buckets",
-            ) {
-                Ok(search_result) => {
-                    return Ok(Response::with((
-                        status::Ok,
-                        Header(ContentType::json()),
-                        search_result,
-                    )));
-                }
-                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+            match serde_json::from_str(&search_result) {
+                Ok(body) => (axum::http::StatusCode::OK, Json(body)),
+                Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
             }
         }
-        _ => _error_response = Response::with((status::BadRequest, "Failed to parse request")),
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
     }
-
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
 }
 
-fn authors_books_handler(req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    let body = req.get::<bodyparser::Struct<request::Search>>();
+async fn authors_handler(Json(author_req): Json<Author>) -> impl IntoResponse {
 
-    match body {
-        Ok(Some(search)) => {
-            debug!("Author's books request:\n{:?}", &search);
-            let req = compose_es_request(&search, SearchType::AuthorsBooks);
-
-            match es_search(req, "$.hits.hits") {
-                Ok(search_result) => {
-                    return Ok(Response::with((
-                        status::Ok,
-                        Header(ContentType::json()),
-                        search_result,
-                    )));
+    let search_query = format!(
+        ".*{}.*",
+        author_req
+            .author
+            .split_whitespace()
+            .map(|v| {
+                let mut chars = v.chars();
+                match chars.next() {
+                    None => String::new(),
+                    Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
                 }
-                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+            })
+            .join(".*")
+    );
+
+    let query = json!({
+        "size": 0,
+        "aggs": {
+            "author": {
+                "terms": {
+                    "field": "authors.keyword",
+                    "include": search_query,
+                    "size": author_req.limit
+                }
             }
         }
-        _ => {
-            _error_response = Response::with((status::BadRequest, "Failed to parse search request"))
-        }
-    }
+    });
 
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
-}
-
-fn title_search_handler(req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    let body = req.get::<bodyparser::Struct<request::Search>>();
-    match body {
-        Ok(Some(search)) => {
-            debug!("Books title search:\n{:?}", &search);
-            let req = compose_es_request(&search, SearchType::TitlesSearch);
-            match es_search(req, "$.hits.hits") {
-                Ok(search_result) => {
-                    return Ok(Response::with((
-                        status::Ok,
-                        Header(ContentType::json()),
-                        search_result,
-                    )));
-                }
-                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+    match es_search(query, "$.aggregations.author.buckets").await {
+        Ok(search_result) => {
+            match serde_json::from_str(&search_result) {
+                Ok(body) => (axum::http::StatusCode::OK, Json(body)),
+                Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
             }
         }
-        _ => {
-            _error_response = Response::with((status::BadRequest, "Failed to parse search request"))
-        }
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
     }
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
 }
 
-fn series_search_handler(req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    let body = req.get::<bodyparser::Struct<request::Search>>();
-    match body {
-        Ok(Some(search)) => {
-            debug!("Books series search:\n{:?}", &search);
-            let req = compose_es_request(&search, SearchType::SeriesSearch);
-            match es_search(req, "$.hits.hits") {
-                Ok(search_result) => {
-                    return Ok(Response::with((
-                        status::Ok,
-                        Header(ContentType::json()),
-                        search_result,
-                    )));
-                }
-                Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+async fn authors_books_handler(Json(search): Json<Search>) -> impl IntoResponse {
+    let req = compose_es_request(&search, SearchType::AuthorsBooks);
+
+    match es_search(req, "$.hits.hits").await {
+        Ok(search_result) => {
+            match serde_json::from_str(&search_result) {
+                Ok(body) => (axum::http::StatusCode::OK, Json(body)),
+                Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
             }
         }
-        _ => {
-            _error_response = Response::with((status::BadRequest, "Failed to parse search request"))
-        }
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
     }
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
 }
 
+async fn title_search_handler(Json(search): Json<Search>) -> impl IntoResponse {
+    let req = compose_es_request(&search, SearchType::TitlesSearch);
 
-fn info_handler(req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    let id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
+    match es_search(req, "$.hits.hits").await {
+        Ok(search_result) => {
+            match serde_json::from_str(&search_result) {
+                Ok(body) => (axum::http::StatusCode::OK, Json(body)),
+                Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
+            }
+        }
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
+    }
+}
 
-    info!("Requesting book with id {}", id);
+async fn series_search_handler(Json(search): Json<Search>) -> impl IntoResponse {
+    let req = compose_es_request(&search, SearchType::SeriesSearch);
 
-    match book_info(id) {
+    match es_search(req, "$.hits.hits").await {
+        Ok(search_result) => {
+            match serde_json::from_str(&search_result) {
+                Ok(body) => (axum::http::StatusCode::OK, Json(body)),
+                Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
+            }
+        }
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
+    }
+}
+
+async fn info_handler(Path(book_id): Path<String>) -> impl IntoResponse {
+    match ES_CLIENT.get("flibooks", &book_id).await {
         Ok(nfo) => {
-            return Ok(Response::with((
-                status::Ok,
-                Header(ContentType::json()),
-                nfo.to_string(),
-            )));
+            let body = Json(nfo);
+            (axum::http::StatusCode::OK, body).into_response()
         }
-        Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+        Err(_) => {
+            let body = Json(json!({"error": "Book not found"}));
+            (axum::http::StatusCode::NOT_FOUND, body).into_response()
+        }
     }
-
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
 }
 
-fn download_handler(req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    let id = req.extensions.get::<Router>().unwrap().find("id").unwrap();
+async fn download_handler(Path(book_id): Path<String>) -> impl IntoResponse {
+    let nfo = match ES_CLIENT.get("flibooks", &book_id).await {
+        Ok(n) => n,
+        Err(_) => {
+            let body = Json(json!({"error": "Book not found"}));
+            return (axum::http::StatusCode::NOT_FOUND, body).into_response();
+        }
+    };
 
-    info!("Downloading book with id {}", id);
+    let container = nfo["container"].as_str().unwrap();
+    let file_name = format!(
+        "{}.{}",
+        nfo["file"].as_str().unwrap(),
+        nfo["ext"].as_str().unwrap()
+    );
+    let out_name = get_out_file_name(&nfo);
 
-    match book_info(id) {
-        Ok(nfo) => {
-            let container = nfo["container"].as_str().unwrap();
-            let file_name = format!("{}.{}", nfo["file"].as_str().unwrap(), nfo["ext"].as_str().unwrap());
+    match get_book_file(container, &file_name).await {
+        Ok(book_content) => {
+            let mut response = Response::new(axum::body::Body::from(book_content));
+            response.headers_mut().insert(
+                axum::http::header::CONTENT_DISPOSITION,
+                axum::http::header::HeaderValue::from_str(&format!("attachment; filename=\"{}\"", out_name)).unwrap(),
+            );
+            response.headers_mut().insert(
+                axum::http::header::CONTENT_TYPE,
+                axum::http::header::HeaderValue::from_static("application/fb2"),
+            );
+            response
+        }
+        Err(e) => {
+            let body = Json(json!({"error": e.to_string()}));
+            (axum::http::StatusCode::NOT_FOUND, body).into_response()
+        }
+    }
+}
 
-            let out_name = get_out_file_name(&nfo);
-
-            let dir = tempdir().unwrap();
-            {
-                let mut file = File::create(dir.path().join(file_name.as_str())).unwrap();
-                unpack_book(container, file_name.as_str(), &mut file).unwrap();
+#[debug_handler]
+async fn archive_handler(Json(download): Json<Download>) -> impl IntoResponse {
+    let index = {
+        let s = conf::SETTINGS.read();
+        match s {
+            Ok(s) => s.elastic_index.clone(),
+            Err(_) => {
+                let body = Json(json!({"error": "Failed to read settings"}));
+                return (axum::http::StatusCode::BAD_REQUEST, body).into_response();
             }
-            let file = dir.path().join(file_name.as_str());
-            let mut resp = Response::with((status::Ok, file));
-
-            resp.headers.set(ContentType(Mime(TopLevel::Application, SubLevel::OctetStream, vec![])));
-            resp.headers.set(ContentDisposition {
-                disposition: DispositionType::Attachment,
-                parameters: vec![DispositionParam::Filename(
-                    Charset::Ext("utf8".to_string()),
-                    None,
-                    out_name.as_bytes().to_vec()
-                )]
-            });
-            return Ok(resp);
         }
-        Err(e) => _error_response = Response::with((status::NotFound, e.to_string())),
+    };
+
+    let temp_dir = match tempfile::tempdir() {
+        Ok(d) => d,
+        Err(e) => {
+            let body = Json(json!({"error": e.to_string()}));
+            return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body).into_response();
+        }
+    };
+    let dir = temp_dir.path().join(format!("flibooks-{}", Uuid::new_v4()));
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        let body = Json(json!({"error": e.to_string()}));
+        return (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body).into_response();
     }
 
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
-}
-
-fn archive_handler(req: &mut Request) -> IronResult<Response> {
-    let mut _error_response = Response::with((status::BadRequest, "Server Error"));
-    info!("Requested books archive download");
-
-    let body = req.get::<bodyparser::Struct<request::Download>>();
-    match body {
-        Ok(Some(search)) => {
-            let temp_dir = tempdir().unwrap();
-            let dir = temp_dir.path().join(format!("flibooks-{}", Uuid::new_v4()));
-            let dir_path = &dir.to_string_lossy().into_owned();
-
-            fs::create_dir_all(&dir).unwrap();
-            info!("Target folder: {}", dir_path);
-
-            for id in search.ids.iter() {
-                    match book_info(id) {
-                        Ok(nfo) => {
-                            debug!("Retrieving book with id {}", id);
-                            let container = nfo["container"].as_str().unwrap();
-                            let file_name = format!("{}.{}", nfo["file"].as_str().unwrap(), nfo["ext"].as_str().unwrap());
-                            let out_name = get_out_file_name(&nfo);
-                            {
-                                let mut file = File::create(dir.join(out_name.as_str())).unwrap();
-                                unpack_book(container, file_name.as_str(), &mut file).unwrap();
+    for id in &download.ids {
+        match ES_CLIENT.get(&index, id).await {
+            Ok(nfo) => {
+                let container = nfo["container"].as_str().unwrap();
+                let file_name = format!(
+                    "{}.{}",
+                    nfo["file"].as_str().unwrap(),
+                    nfo["ext"].as_str().unwrap()
+                );
+                let out_name = get_out_file_name(&nfo);
+                match get_book_file(container, &file_name).await {
+                    Ok(book_content) => {
+                        match std::fs::File::create(dir.join(&out_name)) {
+                            Ok(mut file) => {
+                                if let Err(e) = file.write_all(&book_content) {
+                                    error!("Cannot write book {}: {}", id, e);
+                                }
                             }
+                            Err(e) => error!("Cannot create file for {}: {}", id, e),
                         }
-                        Err(_) => error!("Cannot find the book: {}", id)
                     }
+                    Err(e) => error!("Cannot find the book {}: {}", id, e),
+                }
             }
-
-            let zip_name = format!("{}.zip", dir_path);
-            let zip_path = Path::new(&zip_name);
-            {
-                let file = File::create(zip_path).unwrap();
-
-                let walkdir = WalkDir::new(dir_path);
-                let it = walkdir.into_iter();
-
-                // compress folder
-                zip_dir(&mut it.filter_map(|e| e.ok()), dir_path, &file, ZIP_METHOD).unwrap();
-            }
-
-            let out_name = zip_path.file_name().unwrap().to_string_lossy().into_owned();
-
-            let mut resp = Response::with((status::Ok, zip_path));
-            resp.headers.set(ContentType(Mime(TopLevel::Application, SubLevel::Ext(String::from("zip")), vec![])));
-            resp.headers.set(ContentDisposition {
-                disposition: DispositionType::Attachment,
-                parameters: vec![DispositionParam::Filename(
-                    Charset::Ext("utf8".to_string()),
-                    None,
-                    out_name.as_bytes().to_vec()
-                )]
-            });
-            return Ok(resp);
+            Err(e) => error!("Cannot find the book {}: {}", id, e),
         }
-        _ => {
-            _error_response = Response::with((status::BadRequest, "Failed to parse download request"))
-        }
-
     }
 
-    error!("Responding with error: {}", _error_response);
-    Ok(_error_response)
+    let zip_name = format!("{}.zip", dir.to_string_lossy());
+    let result = create_zip(&dir, &zip_name);
+    match result {
+        Ok(_) => {
+            match std::fs::read(&zip_name) {
+                Ok(zip_bytes) => {
+                    let mut response = Response::new(axum::body::Body::from(zip_bytes));
+                    response.headers_mut().insert(
+                        axum::http::header::CONTENT_DISPOSITION,
+                        axum::http::header::HeaderValue::from_str(&format!("attachment; filename=\"{}\"", zip_name.split('/').last().unwrap_or("archive.zip"))).unwrap(),
+                    );
+                    response.headers_mut().insert(
+                        axum::http::header::CONTENT_TYPE,
+                        axum::http::header::HeaderValue::from_static("application/zip"),
+                    );
+                    response
+                }
+                Err(e) => {
+                    let body = Json(json!({"error": e.to_string()}));
+                    (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+                }
+            }
+        }
+        Err(e) => {
+            let body = Json(json!({"error": e.to_string()}));
+            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, body).into_response()
+        }
+    }
 }
 
-fn book_info(book_id: &str) -> Result<serde_json::Value, Box<dyn Error>> {
-    let settings = conf::SETTINGS.read()?;
+async fn get_book_file(container: &str, file: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    let container_file = std::fs::File::open(container)?;
+    let mut archive = ZipArchive::new(container_file)?;
+    let mut book_content = archive.by_name(file)?;
 
-    ES.document_get::<Value>(
-        index(Cow::Borrowed(settings.elastic_index.as_str()).into_owned()),
-        id(Cow::Borrowed(book_id).into_owned())
-    ).ty("book").send()?.into_document().ok_or(From::from("No matched data found"))
+    let mut buffer = Vec::new();
+    std::io::Read::read_to_end(&mut book_content, &mut buffer)?;
+    Ok(buffer)
+}
+
+fn create_zip(dir: &std::path::Path, zip_path: &str) -> Result<(), Box<dyn Error>> {
+    let file = std::fs::File::create(zip_path)?;
+    let mut zip = zip::ZipWriter::new(file);
+    let options: zip::write::FileOptions<()> = zip::write::FileOptions::default()
+        .compression_method(zip::CompressionMethod::Deflated)
+        .unix_permissions(0o755);
+
+    let mut buffer = Vec::new();
+    for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = path
+            .strip_prefix(dir)
+            .map_err(|_| "Failed to strip prefix")?
+            .to_str()
+            .ok_or("Invalid path")?;
+
+        if path.is_file() {
+            zip.start_file(name, options)?;
+            let mut f = std::fs::File::open(path)?;
+            f.read_to_end(&mut buffer)?;
+            zip.write_all(&buffer)?;
+            buffer.clear();
+        } else if !name.is_empty() {
+            zip.add_directory(name, options)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
 }
 
 fn truncate(s: &str, max_chars: usize) -> String {
     match s.char_indices().nth(max_chars) {
-        None => String::from(s),
-        Some((idx, _)) => format!("{}…", &s[..idx])
+        None => s.to_string(),
+        Some((idx, _)) => format!("{}…", &s[..idx]),
     }
 }
 
 fn get_out_file_name(nfo: &Value) -> String {
     let title = nfo["title"].as_str().unwrap();
-
     let trim_chars: &[char] = &[',', ' '];
+
     let auth_vec: Vec<&str> = nfo["authors"]
-            .as_array().unwrap()
-            .iter()
-                .map(|a| a.as_str().unwrap().trim_matches(trim_chars))
-                .collect();
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a.as_str().unwrap().trim_matches(trim_chars))
+        .collect();
 
     let mut authors = auth_vec.join(", ");
     authors = truncate(&authors, 100);
 
-    if nfo["ser_no"].is_i64() {
-        let ser = nfo["ser_no"].as_i64().unwrap();
+    if let Some(ser) = nfo["ser_no"].as_i64() {
         if ser > 0 {
             return format!("{} - [{}] {}.fb2", authors, ser, title);
         }
@@ -537,47 +563,8 @@ fn get_out_file_name(nfo: &Value) -> String {
     format!("{} - {}.fb2", authors, title)
 }
 
-fn unpack_book(container: &str, file: &str, out_file: &mut File) -> Result<(), Box<dyn Error>> {
-    let container_file = File::open(container)?;
-    let mut archive = zip::ZipArchive::new(container_file)?;
-    let mut book_content = archive.by_name(file)?;
-
-    io::copy(&mut book_content, out_file)?;
-    Ok(())
+enum SearchType {
+    AuthorsBooks,
+    TitlesSearch,
+    SeriesSearch,
 }
-
-fn zip_dir<T>(it: &mut dyn Iterator<Item=DirEntry>, prefix: &str, writer: T, method: zip::CompressionMethod)
-              -> zip::result::ZipResult<()>
-    where T: Write+Seek
-{
-    let mut zip = zip::ZipWriter::new(writer);
-    let options = FileOptions::default()
-        .compression_method(method)
-        .unix_permissions(0o755);
-
-    let mut buffer = Vec::new();
-    for entry in it {
-        let path = entry.path();
-        let name = path.strip_prefix(Path::new(prefix)).unwrap().to_str().unwrap();
-
-        // Write file or directory explicitly
-        // Some unzip tools unzip files with directory paths correctly, some do not!
-        if path.is_file() {
-            debug!("adding file {:?} as {:?} ...", path, name);
-            zip.start_file(name, options)?;
-            let mut f = File::open(path)?;
-
-            f.read_to_end(&mut buffer)?;
-            zip.write_all(&*buffer)?;
-            buffer.clear();
-        } else if name.chars().count() != 0 {
-            // Only if not root! Avoids path spec / warning
-            // and mapname conversion failed error on unzip
-            debug!("adding dir {:?} as {:?} ...", path, name);
-            zip.add_directory(name, options)?;
-        }
-    }
-    zip.finish()?;
-    Result::Ok(())
-}
-

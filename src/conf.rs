@@ -1,6 +1,7 @@
 use config::{Config, ConfigError, Environment, File};
 use std::env;
 use std::sync::RwLock;
+use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -13,7 +14,7 @@ pub struct Settings {
     pub listen_address: String,
 }
 
-lazy_static! {
+lazy_static::lazy_static! {
     pub static ref SETTINGS: RwLock<Settings> = RwLock::new(Settings::new().unwrap());
 }
 
@@ -22,7 +23,7 @@ impl Settings {
         let s = Config::builder()
             .set_default("log_level", "info")?
             .set_default("log_config", "log4rs.yml")?
-            .set_default("elastic_url", "https://localhost:9200")?
+            .set_default("elastic_url", "http://localhost:9200")?
             .set_default("elastic_index", "flibooks")?
             .set_default("elastic_login", "admin")?
             .set_default("listen_address", "localhost:3000")?
@@ -31,6 +32,6 @@ impl Settings {
             .add_source(Environment::with_prefix("fli"))
             .build()?;
 
-            s.try_deserialize()
+        s.try_deserialize()
     }
 }

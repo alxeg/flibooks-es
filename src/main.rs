@@ -1,44 +1,15 @@
-extern crate bodyparser;
-extern crate config;
-extern crate elastic;
-extern crate futures;
-extern crate inflections;
-extern crate itertools;
-extern crate iron;
-extern crate jsonpath;
-extern crate log4rs;
-extern crate persistent;
-extern crate tempfile;
-extern crate tokio_core;
-extern crate uuid;
-extern crate walkdir;
-extern crate zip;
+mod conf;
+mod logger;
+mod parse;
+mod serve;
 
-#[macro_use]
-extern crate router;
-#[macro_use]
-extern crate serde_json;
-#[macro_use]
-extern crate serde_derive;
-#[macro_use]
-extern crate lazy_static;
-#[macro_use]
-extern crate log;
 
-extern crate clap;
-
-pub(crate) mod conf;
-pub(crate) mod logger;
-pub(crate) mod parse;
-pub(crate) mod serve;
-
-use clap::crate_version;
-
-fn main() {
+#[tokio::main]
+async fn main() {
     logger::setup().unwrap();
 
     let matches = clap::Command::new("flibooks-es")
-        .version(crate_version!())
+        .version(env!("CARGO_PKG_VERSION"))
         .about("Flibusta's backups books search (via ES)")
         .subcommand(
             clap::Command::new("parse")
@@ -49,8 +20,7 @@ fn main() {
                         .long("inpx")
                         .value_name("INPX_FILE")
                         .help("Flibooks backup index file to be parsed")
-                        .required(true)
-                        .takes_value(true),
+                        .required(true),
                 ),
         )
         .subcommand(clap::Command::new("serve").about("Serves the REST API (Default)"))
@@ -58,11 +28,11 @@ fn main() {
 
     match matches.subcommand_matches("parse") {
         Some(parse_args) => {
-            let inpx_file = parse_args.value_of("inpx").unwrap();
-            parse::start(inpx_file).unwrap();
+            let inpx_file = parse_args.get_one::<String>("inpx").unwrap();
+            parse::start(inpx_file).await.unwrap();
         }
         _ => {
-            serve::start().unwrap();
+            serve::start().await.unwrap();
         }
     }
 }
