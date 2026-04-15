@@ -45,8 +45,8 @@ fn build_router() -> axum::Router {
         .route("/api/book/langs", get(langs_handler))
         .route("/api/book/search", post(title_search_handler))
         .route("/api/book/series", post(series_search_handler))
-        .route("/api/book/:id", get(info_handler))
-        .route("/api/book/:id/download", get(download_handler))
+        .route("/api/book/{id}", get(info_handler))
+        .route("/api/book/{id}/download", get(download_handler))
         .route("/api/book/archive", post(archive_handler))
 }
 
