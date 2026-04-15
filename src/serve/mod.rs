@@ -53,6 +53,7 @@ fn build_router() -> axum::Router {
 struct EsClient {
     client: reqwest::Client,
     url: String,
+    login: String,
     password: String,
 }
 
@@ -64,13 +65,13 @@ impl EsClient {
             Err(_) => return Err("Failed to read settings".to_string()),
         };
         let url = s.elastic_url.clone();
+        let login = s.elastic_login.clone();
         let password = s.elastic_password.clone();
-        // auth_header is computed but not used - we use bearer_auth instead
-
 
         Ok(EsClient {
             client: reqwest::Client::new(),
             url,
+            login,
             password,
         })
     }
@@ -82,7 +83,7 @@ impl EsClient {
             .client
             .post(&url)
             .header(CONTENT_TYPE, "application/json")
-            .bearer_auth(&self.password)
+            .basic_auth(&self.login, Some(&self.password))
             .json(&body)
             .send()
             .await
@@ -104,7 +105,7 @@ impl EsClient {
         let response = self
             .client
             .get(&url)
-            .bearer_auth(&self.password)
+            .basic_auth(&self.login, Some(&self.password))
             .send()
             .await
             .map_err(|e| e.to_string())?;
