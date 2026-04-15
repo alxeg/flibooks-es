@@ -103,7 +103,7 @@ fn process_book(fields: Vec<&str>) -> Value {
         "authors": authors,
         "genres": genres,
         "series": fields[3],
-        "ser_no": fields[4].parse::<i32>().unwrap_or(0),
+        "ser_no": fields[4],
         "file": fields[5],
         "file_size": fields[6].parse::<i32>().unwrap_or(0),
         "lib_id": fields[7],

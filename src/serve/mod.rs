@@ -243,7 +243,7 @@ fn compose_es_request(search: &Search, s_type: SearchType) -> Value {
 
     let mut sort = match s_type {
         SearchType::SeriesSearch | SearchType::AuthorsBooks => {
-            vec![json!("series.keyword"), json!("ser_no"), json!("title.keyword")]
+            vec![json!("series.keyword"), json!("ser_no.keyword"), json!("title.keyword")]
         }
         SearchType::TitlesSearch => vec![json!("title.keyword")],
     };
@@ -561,10 +561,10 @@ fn get_out_file_name(nfo: &Value) -> String {
     let mut authors = auth_vec.join(", ");
     authors = truncate(&authors, 100);
 
-    if let Some(ser) = nfo["ser_no"].as_i64() {
-        if ser > 0 {
-            return format!("{} - [{}] {}.fb2", authors, ser, title);
-        }
+    let series = nfo["series"].as_str().unwrap_or("");
+    let ser = nfo["ser_no"].as_str().unwrap_or("");
+    if !series.is_empty() && !ser.is_empty() {
+        return format!("{} - [{}] {}.fb2", authors, ser, title);
     }
 
     format!("{} - {}.fb2", authors, title)
