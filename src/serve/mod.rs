@@ -4,11 +4,13 @@ use axum::response::Response;
 use axum::routing::{get, post};
 use axum::Router;
 use axum::debug_handler;
+use log::debug;
 use log::error;
 use log::info;
 use itertools::Itertools;
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
+use serde_json_path::JsonPath;
 use std::error::Error;
 use std::io::{Read, Write};
 use uuid::Uuid;
@@ -75,6 +77,7 @@ impl EsClient {
 
     async fn search(&self, index: &str, body: Value) -> Result<Value, String> {
         let url = format!("{}/{}/_search", self.url, index);
+        debug!("ES search: url={}, body={}", url, body);
         let response = self
             .client
             .post(&url)
@@ -85,15 +88,19 @@ impl EsClient {
             .await
             .map_err(|e| e.to_string())?;
 
-        if response.status().is_success() {
-            response.json().await.map_err(|e| e.to_string())
+        let status = response.status();
+        if status.is_success() {
+            let result = response.json().await.map_err(|e| e.to_string())?;
+            debug!("ES search success: status={}, response={}", status, result);
+            Ok(result)
         } else {
-            Err(format!("Search failed: {}", response.status()))
+            Err(format!("Search failed: {}", status))
         }
     }
 
     async fn get(&self, index: &str, id: &str) -> Result<Value, String> {
         let url = format!("{}/{}/_doc/{}", self.url, index, id);
+        debug!("ES get: url={}", url);
         let response = self
             .client
             .get(&url)
@@ -105,7 +112,9 @@ impl EsClient {
         if response.status().is_success() {
             let body: Value = response.json().await.map_err(|e| e.to_string())?;
             if let Some(source) = body.get("_source") {
-                Ok(source.clone())
+                let result = source.clone();
+                debug!("ES get success: id={}, response={}", id, result);
+                Ok(result)
             } else {
                 Err("Document not found".to_string())
             }
@@ -115,40 +124,7 @@ impl EsClient {
     }
 }
 
-// Simple JSONPath-like extraction for common patterns
-fn extract_path<'a>(value: &'a Value, path: &str) -> Option<&'a Value> {
-    let parts: Vec<&str> = path
-        .trim_start_matches('$')
-        .split('.')
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    let mut current: &'a Value = value;
-    for part in parts {
-        if let Some(obj) = current.as_object() {
-            if part.starts_with('[') && part.ends_with(']') {
-                let idx: usize = part[1..part.len() - 1].parse().ok()?;
-                if let Some(arr) = obj.get(&format!("[{}]", idx)) {
-                    current = arr;
-                } else if let Some(arr) = obj.get(part.trim_start_matches('[').trim_end_matches(']')) {
-                    current = arr;
-                } else {
-                    return None;
-                }
-            } else {
-                current = obj.get(part)?;
-            }
-        } else if let Some(arr) = current.as_array() {
-            let idx: usize = part.parse().ok()?;
-            current = arr.get(idx)?;
-        } else {
-            return None;
-        }
-    }
-    Some(current)
-}
-
-async fn es_search(query: Value, filter: &str) -> Result<String, String> {
+async fn es_search(query: Value, path: &str) -> Result<String, String> {
     let index = {
         let s = conf::SETTINGS.read();
         match s {
@@ -157,12 +133,27 @@ async fn es_search(query: Value, filter: &str) -> Result<String, String> {
         }
     };
 
-    let result = ES_CLIENT.search(&index, query).await.map_err(|e| e.to_string())?;
-    let found = extract_path(&result, filter);
+    debug!("ES query: index={}, path={}, query={}", index, path, query);
 
-    match found {
-        Some(filtered) => Ok(serde_json::to_string(filtered).map_err(|e| e.to_string())?),
-        None => Err("No matched data found".to_string()),
+    let result = ES_CLIENT.search(&index, query).await.map_err(|e| e.to_string())?;
+
+    debug!("ES response: {}", result);
+
+    let json_path = JsonPath::parse(path).map_err(|e| e.to_string())?;
+    let found = json_path.query(&result).all();
+
+    if found.is_empty() {
+        Err("No matched data found".to_string())
+    } else {
+        // If we have exactly one node and it's an array, return its contents directly
+        // to avoid double-wrapping arrays
+        let data_to_serialize: Vec<Value> = if found.len() == 1 {
+            found[0].as_array()
+                .map(|arr| arr.into_iter().cloned().collect())
+        } else {
+            None
+        }.unwrap_or_else(|| found.into_iter().cloned().collect());
+        Ok(serde_json::to_string(&data_to_serialize).map_err(|e| e.to_string())?)
     }
 }
 
@@ -265,14 +256,14 @@ async fn langs_handler() -> impl IntoResponse {
         }
     });
 
-    match es_search(query, "$.aggregations.lang.buckets").await {
+    match es_search(query, "$.aggregations.lang.buckets..key").await {
         Ok(search_result) => {
-            match serde_json::from_str(&search_result) {
+            match serde_json::from_str::<Value>(&search_result) {
                 Ok(body) => (axum::http::StatusCode::OK, Json(body)),
                 Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
             }
         }
-        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!([{"error": e.to_string()}]))),
     }
 }
 
@@ -306,14 +297,14 @@ async fn authors_handler(Json(author_req): Json<Author>) -> impl IntoResponse {
         }
     });
 
-    match es_search(query, "$.aggregations.author.buckets").await {
+    match es_search(query, "$.aggregations.author.buckets..key").await {
         Ok(search_result) => {
-            match serde_json::from_str(&search_result) {
+            match serde_json::from_str::<Value>(&search_result) {
                 Ok(body) => (axum::http::StatusCode::OK, Json(body)),
                 Err(_) => (axum::http::StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "Failed to parse response"}))),
             }
         }
-        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!({"error": e.to_string()}))),
+        Err(e) => (axum::http::StatusCode::NOT_FOUND, Json(json!([{"error": e.to_string()}]))),
     }
 }
 
