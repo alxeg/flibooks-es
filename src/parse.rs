@@ -20,12 +20,6 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
     info!("Using the elasticsearch at '{}'", url);
     info!("Parsing the '{}' file", file_name);
 
-    // Create auth header
-    let auth_value = format!(
-        "Basic {}",
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("{}:{}", login, password))
-    );
-
     // Create client with headers
     let client = reqwest::Client::new();
 
@@ -63,8 +57,7 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
             let bulk_url = format!("{}/_bulk", url);
             let response = client
                 .post(&bulk_url)
-                .bearer_auth(&password)
-                .header("Authorization", &auth_value)
+                .basic_auth(&login, Some(&password))
                 .header(CONTENT_TYPE, "application/x-ndjson")
                 .body(bulk)
                 .send()
