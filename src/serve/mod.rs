@@ -153,7 +153,22 @@ async fn es_search(query: Value, path: &str) -> Result<String, String> {
         } else {
             None
         }.unwrap_or_else(|| found.into_iter().cloned().collect());
-        Ok(serde_json::to_string(&data_to_serialize).map_err(|e| e.to_string())?)
+
+        // Transform hits to array of {id, book} objects if path is $.hits.hits
+        let transformed = if path == "$.hits.hits" {
+            data_to_serialize
+                .into_iter()
+                .map(|hit| {
+                    let id = hit.get("_id").cloned().unwrap_or(Value::Null);
+                    let book = hit.get("_source").cloned().unwrap_or(Value::Null);
+                    json!({"id": id, "book": book})
+                })
+                .collect()
+        } else {
+            data_to_serialize
+        };
+
+        Ok(serde_json::to_string(&transformed).map_err(|e| e.to_string())?)
     }
 }
 
