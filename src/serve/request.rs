@@ -23,10 +23,18 @@ pub struct Search {
     pub langs: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Download {
+#[derive(Debug, Deserialize)]
+pub struct DownloadFormat {
+    #[serde(default = "default_empty_string")]
+    pub format: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ArchiveRequest {
     #[serde(default = "default_vec")]
-    pub ids: Vec<String>,
+    pub id: Vec<String>,
+    #[serde(default = "default_empty_string")]
+    pub format: String,
 }
 
 pub fn default_limit() -> u32 {

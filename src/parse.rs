@@ -1,4 +1,4 @@
-use log::{info, error};
+use log::{error, info};
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
 use std::error::Error;
@@ -10,12 +10,17 @@ use zip::ZipArchive;
 use crate::conf;
 
 pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
-    let settings = conf::SETTINGS.read()?;
-
-    let url = settings.elastic_url.clone();
-    let login = settings.elastic_login.clone();
-    let password = settings.elastic_password.clone();
-    let index = settings.elastic_index.clone();
+    let url;
+    let login;
+    let password;
+    let index;
+    {
+        let settings = conf::SETTINGS.read()?;
+        url = settings.elastic_url.clone();
+        login = settings.elastic_login.clone();
+        password = settings.elastic_password.clone();
+        index = settings.elastic_index.clone();
+    }
 
     info!("Using the elasticsearch at '{}'", url);
     info!("Parsing the '{}' file", file_name);
@@ -32,7 +37,7 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
         if file.name().ends_with(".inp") {
             let mut bulk = String::new();
 
-            let inpx = format!("{}", file.name());
+            let inpx = file.name().to_string();
             let container = inpx.replace(".inp", ".zip");
 
             let breader = BufReader::new(file);
@@ -49,9 +54,9 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
                 });
 
                 bulk.push_str(&serde_json::to_string(&header)?);
-                bulk.push_str("\n");
+                bulk.push('\n');
                 bulk.push_str(&serde_json::to_string(&rec)?);
-                bulk.push_str("\n");
+                bulk.push('\n');
             }
 
             let bulk_url = format!("{}/_bulk", url);
@@ -82,14 +87,8 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
 }
 
 fn process_book(fields: Vec<&str>) -> Value {
-    let authors: Vec<_> = fields[0]
-        .split(':')
-        .filter(|s| !s.is_empty())
-        .collect();
-    let genres: Vec<_> = fields[1]
-        .split(':')
-        .filter(|s| !s.is_empty())
-        .collect();
+    let authors: Vec<_> = fields[0].split(':').filter(|s| !s.is_empty()).collect();
+    let genres: Vec<_> = fields[1].split(':').filter(|s| !s.is_empty()).collect();
 
     json!({
         "title": fields[2],

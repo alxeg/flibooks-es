@@ -1,6 +1,5 @@
-use log::LevelFilter;
 use log::info;
-use log4rs;
+use log::LevelFilter;
 use log4rs::append::console::ConsoleAppender;
 use log4rs::config::{Appender, Config, Root};
 use log4rs::encode::pattern::PatternEncoder;
@@ -28,7 +27,8 @@ pub fn setup() -> Result<(), Box<dyn Error>> {
         let stdout = ConsoleAppender::builder()
             .encoder(Box::new(PatternEncoder::new(
                 "{d(%+)(local)} {h({l})} [{t}] [{f}:{L}] {m}{n}",
-            ))).build();
+            )))
+            .build();
         let config = Config::builder()
             .appender(Appender::builder().build("stdout", Box::new(stdout)))
             .build(Root::builder().appender("stdout").build(log_level))

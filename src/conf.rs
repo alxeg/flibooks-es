@@ -1,7 +1,7 @@
 use config::{Config, ConfigError, Environment, File};
+use serde::Deserialize;
 use std::env;
 use std::sync::RwLock;
-use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
 pub struct Settings {
@@ -12,6 +12,7 @@ pub struct Settings {
     pub elastic_password: String,
     pub elastic_index: String,
     pub listen_address: String,
+    pub fb2c_path: String,
 }
 
 lazy_static::lazy_static! {
@@ -27,8 +28,12 @@ impl Settings {
             .set_default("elastic_index", "flibooks")?
             .set_default("elastic_login", "admin")?
             .set_default("listen_address", "localhost:3000")?
+            .set_default("fb2c_path", "./fb2c")?
             .add_source(File::with_name("flibooks").required(false))
-            .add_source(File::with_name(env::var("FLI_CONFIG").unwrap_or_default().as_str()).required(false))
+            .add_source(
+                File::with_name(env::var("FLI_CONFIG").unwrap_or_default().as_str())
+                    .required(false),
+            )
             .add_source(Environment::with_prefix("fli"))
             .build()?;
 
