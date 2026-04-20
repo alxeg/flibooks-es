@@ -405,7 +405,7 @@ async fn series_search_handler(Json(search): Json<Search>) -> impl IntoResponse 
 async fn info_handler(Path(book_id): Path<String>) -> impl IntoResponse {
     match ES_CLIENT.get("flibooks", &book_id).await {
         Ok(nfo) => {
-            let body = Json(nfo);
+            let body = Json(json!({"id": book_id, "book": nfo}));
             (axum::http::StatusCode::OK, body).into_response()
         }
         Err(_) => {
@@ -437,7 +437,7 @@ async fn download_handler(
     let format = params.format;
 
     // Check if conversion is requested
-    if !format.is_empty() {
+    if !format.is_empty() && format != "fb2"{
         return download_converted_book(container, &file_name, &out_name, &format).await;
     }
 
