@@ -38,7 +38,7 @@ pub struct ArchiveRequest {
 }
 
 pub fn default_limit() -> u32 {
-    10
+    1000
 }
 
 pub fn default_deleted() -> bool {
