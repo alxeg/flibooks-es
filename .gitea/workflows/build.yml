@@ -38,7 +38,7 @@ jobs:
           push: ${{ github.event.inputs.push_image == 'true' }}
           tags: |
             ${{ vars.HARBOR_REGISTRY_URL }}/lab/flibooks-es:latest
-            ${{ vars.HARBOR_REGISTRY_URL }}/lab/flibooks-es:${{ github.run_number }}-{{ github.sha }}
+            ${{ vars.HARBOR_REGISTRY_URL }}/lab/flibooks-es:${{ github.run_number }}-${{ github.sha }}
 
       - name: Registry logout
         if: always()
