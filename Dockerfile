@@ -2,6 +2,7 @@
 FROM rust:1.95-alpine AS build
 
 ARG FB2C_VERSION=v1.78.5
+ARG FB2C_DOWNLOAD_URL=https://github.com/rupor-github/fb2converter/releases/download
 
 ARG TARGETARCH
 ARG TARGETOS
@@ -15,7 +16,7 @@ ADD         . /build
 
 RUN         mkdir -p /build/bin && cd /build && \
             cargo build --release && \
-            curl -L "https://github.com/rupor-github/fb2converter/releases/download/${FB2C_VERSION}/fb2c-${TARGETOS}-${TARGETARCH}.zip" -o fb2c-${TARGETOS}-${TARGETARCH}.zip && \
+            curl -L "${FB2C_DOWNLOAD_URL}/${FB2C_VERSION}/fb2c-${TARGETOS}-${TARGETARCH}.zip" -o fb2c-${TARGETOS}-${TARGETARCH}.zip && \
             unzip -d target/release/ fb2c-${TARGETOS}-${TARGETARCH}.zip && \
             rm -rf fb2c-${TARGETOS}-${TARGETARCH}.zip && \
             echo Done!
