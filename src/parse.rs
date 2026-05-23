@@ -97,6 +97,7 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
             warn!("Skipping the inp entry {}", file.name());
         }
     }
+    info!("Finished processing '{}'", file_name);
     Ok(())
 }
 
