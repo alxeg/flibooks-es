@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::{error, info, debug, warn};
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
 use std::error::Error;
@@ -46,6 +46,8 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
             let mut bulk = String::new();
 
             let inpx = file.name().to_string();
+            debug!("Parsing the inp entry '{}'", inpx);
+
             let container = inpx.replace(".inp", ".zip");
 
             let breader = BufReader::new(file);
@@ -68,8 +70,8 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
             }
 
             let bulk_url = format!("{}/{}/_bulk", url, index);
+            debug!("Trying to insert parsed bulk data of {} to es url {}", inpx, bulk_url);
 
-            info!("Trying to insert bulk data to '{}'", bulk_url.clone());
             let response = client
                 .post(&bulk_url)
                 .basic_auth(&login, Some(&password))
@@ -85,12 +87,14 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
                         error!("Bulk indexing had errors");
                     }
                 }
-                info!("Successfully indexed bulk data");
+                info!("Successfully indexed bulk data for {}", inpx);
             } else {
                 let status = response.status();
                 let body = response.text().await?;
-                error!("Error processing bulk: {} - {}", status, body);
+                error!("Error processing bulk {}: {} - {}", inpx, status, body);
             }
+        } else {
+            warn!("Skipping the inp entry {}", file.name());
         }
     }
     Ok(())
