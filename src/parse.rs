@@ -14,12 +14,14 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
     let login;
     let password;
     let index;
+    let data_dir;
     {
         let settings = conf::SETTINGS.read()?;
         url = settings.elastic_url.clone();
         login = settings.elastic_login.clone();
         password = settings.elastic_password.clone();
         index = settings.elastic_index.clone();
+        data_dir = settings.data_dir.clone();
     }
 
     info!("Using the elasticsearch at '{}'", url);
@@ -28,7 +30,13 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
     // Create client with headers
     let client = reqwest::Client::new();
 
-    let file = File::open(file_name)?;
+    let file_path = if std::path::Path::new(&file_name).is_relative() && !data_dir.is_empty() {
+        std::path::Path::new(&data_dir).join(file_name)
+    } else {
+        std::path::Path::new(file_name).to_path_buf()
+    };
+
+    let file = File::open(&file_path)?;
     let mut archive = ZipArchive::new(file)?;
 
     for i in 0..archive.len() {
@@ -59,7 +67,9 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
                 bulk.push('\n');
             }
 
-            let bulk_url = format!("{}/_bulk", url);
+            let bulk_url = format!("{}/{}/_bulk", url, index);
+
+            info!("Trying to insert bulk data to '{}'", bulk_url.clone());
             let response = client
                 .post(&bulk_url)
                 .basic_auth(&login, Some(&password))

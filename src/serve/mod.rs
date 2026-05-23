@@ -726,7 +726,21 @@ async fn process_converted_book(
 }
 
 async fn get_book_file(container: &str, file: &str) -> Result<Vec<u8>, String> {
-    let container_file = std::fs::File::open(container).map_err(|e| e.to_string())?;
+    let data_dir = {
+        let settings = conf::SETTINGS.read();
+        match settings {
+            Ok(s) => s.data_dir.clone(),
+            Err(_) => return Err("Failed to read settings".to_string()),
+        }
+    };
+
+    let container_path = if std::path::Path::new(&container).is_relative() && !data_dir.is_empty() {
+        std::path::Path::new(&data_dir).join(container)
+    } else {
+        std::path::Path::new(container).to_path_buf()
+    };
+
+    let container_file = std::fs::File::open(&container_path).map_err(|e| e.to_string())?;
     let mut archive = ZipArchive::new(container_file).map_err(|e| e.to_string())?;
     let mut book_content = archive.by_name(file).map_err(|e| e.to_string())?;
 

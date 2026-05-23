@@ -22,7 +22,8 @@
         "program": "${workspaceRoot}/target/debug/${workspaceRootFolderName}",
         "args": ["parse", "--inpx", "flibusta_fb2_local.inpx"],
         "env": {
-            "FLI_CONFIG": "${workspaceFolder}/flibooks"
+            "FLI_CONFIG": "${workspaceFolder}/flibooks",
+            "fli_elastic_index": "flitest1"
         },
         "cwd": "${workspaceFolder}"
     }]
