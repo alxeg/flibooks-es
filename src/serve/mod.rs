@@ -1,4 +1,5 @@
 use axum::extract::{Json, Path, Query};
+use axum::extract::OriginalUri;
 use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::{get, post};
@@ -14,6 +15,9 @@ use std::error::Error;
 use std::io::{Read, Write};
 use uuid::Uuid;
 use zip::ZipArchive;
+use axum::extract::State;
+use axum::http::StatusCode;
+use mime_guess;
 
 use crate::conf;
 use crate::convert::{get_format_content_type, FB2C_CONVERTER};
@@ -41,8 +45,58 @@ pub async fn start() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[derive(Clone)]
+struct StaticFilesConfig {
+    static_dir: String,
+    index_path: String,
+}
+
+async fn static_files_fallback(
+    State(config): State<StaticFilesConfig>,
+    OriginalUri(original_uri): OriginalUri,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    // Get the path from the original URI
+    let requested_path = original_uri.path().strip_prefix('/').unwrap_or(original_uri.path());
+
+    // Build the file path - for fallback mode, requested_path is the full path relative to static_dir
+    let file_path = if requested_path.is_empty() {
+        config.index_path.clone()
+    } else {
+        format!("{}/{}", config.static_dir, requested_path)
+    };
+
+    // Check if the file exists, if not serve index.html
+    let path_to_serve = if std::path::Path::new(&file_path).exists() {
+        file_path
+    } else {
+        config.index_path.clone()
+    };
+
+    match tokio::fs::read(&path_to_serve).await {
+        Ok(content) => {
+            let mime_type = mime_guess::from_path(&path_to_serve).first_or_octet_stream();
+            Ok((StatusCode::OK, [(axum::http::header::CONTENT_TYPE, mime_type.to_string())], content))
+        }
+        Err(e) => {
+            error!("Failed to serve file {}: {}", path_to_serve, e);
+            Err((StatusCode::NOT_FOUND, "File not found".to_string()))
+        }
+    }
+}
+
 fn build_router() -> axum::Router {
-    Router::new()
+    let settings = conf::SETTINGS.read().unwrap();
+    let static_dir = settings.static_dir.clone();
+    let static_route = settings.static_route.clone();
+    let index_path = format!("{}/index.html", static_dir);
+    drop(settings);
+
+    let static_config = StaticFilesConfig {
+        static_dir,
+        index_path,
+    };
+
+    let router = Router::new()
         .route("/health", get(health_handler))
         .route("/api/author/search", post(authors_handler))
         .route("/api/author/books", post(authors_books_handler))
@@ -52,7 +106,14 @@ fn build_router() -> axum::Router {
         .route("/api/book/{id}", get(info_handler))
         .route("/api/book/{id}/download", get(download_handler))
         .route("/api/book/archive", post(archive_handler))
-        .route("/api/book/archive", get(archive_get_handler))
+        .route("/api/book/archive", get(archive_get_handler));
+
+    if static_route.is_empty() || static_route == "/" {
+        router.fallback(get(static_files_fallback).with_state(static_config))
+    } else {
+        let route_pattern = format!("{}*", static_route);
+        router.nest_service(&route_pattern, get(static_files_fallback).with_state(static_config))
+    }
 }
 
 struct EsClient {

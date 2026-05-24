@@ -15,6 +15,8 @@ pub struct Settings {
     pub listen_address: String,
     pub fb2c_path: String,
     pub data_dir: String,
+    pub static_dir: String,
+    pub static_route: String,
 }
 
 lazy_static::lazy_static! {
@@ -33,6 +35,8 @@ impl Settings {
             .set_default("listen_address", "localhost:3000")?
             .set_default("fb2c_path", "./fb2c")?
             .set_default("data_dir", "")?
+            .set_default("static_dir", "./static")?
+            .set_default("static_route", "/")?
             .add_source(File::with_name("flibooks").required(false))
             .add_source(
                 File::with_name(env::var("FLI_CONFIG").unwrap_or_default().as_str())
