@@ -121,6 +121,7 @@ struct EsClient {
     url: String,
     login: String,
     password: String,
+    index: String,
 }
 
 impl EsClient {
@@ -142,11 +143,14 @@ impl EsClient {
 
         let client = client.map_err(|e| e.to_string())?;
 
+        let index = s.elastic_index.clone();
+
         Ok(EsClient {
             client,
             url,
             login,
             password,
+            index,
         })
     }
 
@@ -214,18 +218,12 @@ impl EsClient {
 }
 
 async fn es_search(query: Value, path: &str) -> Result<String, String> {
-    let index = {
-        let s = conf::SETTINGS.read();
-        match s {
-            Ok(s) => s.elastic_index.clone(),
-            Err(_) => return Err("Failed to read settings".to_string()),
-        }
-    };
+    let index = &ES_CLIENT.index;
 
     debug!("ES query: index={}, path={}, query={}", index, path, query);
 
     let result = ES_CLIENT
-        .search(&index, query)
+        .search(index, query)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -487,7 +485,7 @@ async fn series_search_handler(Json(search): Json<Search>) -> impl IntoResponse 
 }
 
 async fn info_handler(Path(book_id): Path<String>) -> impl IntoResponse {
-    match ES_CLIENT.get("flibooks", &book_id).await {
+    match ES_CLIENT.get(&ES_CLIENT.index, &book_id).await {
         Ok(nfo) => {
             let body = Json(json!({"id": book_id, "book": nfo}));
             (axum::http::StatusCode::OK, body).into_response()
@@ -503,7 +501,7 @@ async fn download_handler(
     Path(book_id): Path<String>,
     Query(params): Query<DownloadFormat>,
 ) -> impl IntoResponse {
-    let nfo = match ES_CLIENT.get("flibooks", &book_id).await {
+    let nfo = match ES_CLIENT.get(&ES_CLIENT.index, &book_id).await {
         Ok(n) => n,
         Err(_) => {
             let body = Json(json!({"error": "Book not found"}));
@@ -631,16 +629,7 @@ async fn download_converted_book(
 }
 
 async fn archive_handler(Json(archive_request): Json<ArchiveRequest>) -> impl IntoResponse {
-    let index = {
-        let s = conf::SETTINGS.read();
-        match s {
-            Ok(s) => s.elastic_index.clone(),
-            Err(_) => {
-                let body = Json(json!({"error": "Failed to read settings"}));
-                return (axum::http::StatusCode::BAD_REQUEST, body).into_response();
-            }
-        }
-    };
+    let index = &ES_CLIENT.index;
 
     let format = archive_request.format;
     let temp_dir = match tempfile::tempdir() {
@@ -657,7 +646,7 @@ async fn archive_handler(Json(archive_request): Json<ArchiveRequest>) -> impl In
     }
 
     for id in &archive_request.id {
-        match ES_CLIENT.get(&index, id).await {
+        match ES_CLIENT.get(index, id).await {
             Ok(nfo) => {
                 let container = nfo["container"].as_str().unwrap();
                 let file_name = format!(
