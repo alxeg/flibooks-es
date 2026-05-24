@@ -71,9 +71,17 @@ impl EsClient {
         let url = s.elastic_url.clone();
         let login = s.elastic_login.clone();
         let password = s.elastic_password.clone();
+        let skip_tls_verify = s.elastic_skip_tls_verify;
+
+        let client = reqwest::Client::builder()
+                .danger_accept_invalid_certs(skip_tls_verify)
+                .danger_accept_invalid_hostnames(skip_tls_verify)
+                .build();
+
+        let client = client.map_err(|e| e.to_string())?;
 
         Ok(EsClient {
-            client: reqwest::Client::new(),
+            client,
             url,
             login,
             password,

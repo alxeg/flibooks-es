@@ -15,6 +15,7 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
     let password;
     let index;
     let data_dir;
+    let skip_tls_verify;
     {
         let settings = conf::SETTINGS.read()?;
         url = settings.elastic_url.clone();
@@ -22,13 +23,17 @@ pub async fn start(file_name: &str) -> Result<(), Box<dyn Error>> {
         password = settings.elastic_password.clone();
         index = settings.elastic_index.clone();
         data_dir = settings.data_dir.clone();
+        skip_tls_verify = settings.elastic_skip_tls_verify;
     }
 
     info!("Using the elasticsearch at '{}'", url);
     info!("Parsing the '{}' file", file_name);
 
     // Create client with headers
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(skip_tls_verify)
+        .danger_accept_invalid_hostnames(skip_tls_verify)
+        .build()?;
 
     let file_path = if std::path::Path::new(&file_name).is_relative() && !data_dir.is_empty() {
         std::path::Path::new(&data_dir).join(file_name)
