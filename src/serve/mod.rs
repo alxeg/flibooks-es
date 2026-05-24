@@ -43,6 +43,7 @@ pub async fn start() -> Result<(), Box<dyn Error>> {
 
 fn build_router() -> axum::Router {
     Router::new()
+        .route("/health", get(health_handler))
         .route("/api/author/search", post(authors_handler))
         .route("/api/author/books", post(authors_books_handler))
         .route("/api/book/langs", get(langs_handler))
@@ -134,6 +135,20 @@ impl EsClient {
         } else {
             Err("Document not found".to_string())
         }
+    }
+
+    async fn check(&self) -> Result<bool, String> {
+        let url = format!("{}/_cluster/health", self.url);
+        debug!("ES health check: url={}", url);
+        let response = self
+            .client
+            .get(&url)
+            .basic_auth(&self.login, Some(&self.password))
+            .send()
+            .await
+            .map_err(|e| e.to_string())?;
+
+        Ok(response.status().is_success())
     }
 }
 
@@ -796,6 +811,24 @@ fn truncate(s: &str, max_chars: usize) -> String {
         None => s.to_string(),
         Some((idx, _)) => format!("{}…", &s[..idx]),
     }
+}
+
+async fn health_handler() -> impl IntoResponse {
+    let (status, body) = match ES_CLIENT.check().await {
+        Ok(true) => (
+            axum::http::StatusCode::OK,
+            Json(json!({"status": "ok", "elastic": "available"})),
+        ),
+        Ok(false) => (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "error", "elastic": "unavailable"})),
+        ),
+        Err(e) => (
+            axum::http::StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({"status": "error", "elastic": e.to_string()})),
+        ),
+    };
+    (status, body).into_response()
 }
 
 fn get_out_file_name(nfo: &Value) -> String {
